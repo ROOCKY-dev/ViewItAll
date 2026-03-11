@@ -121,8 +121,8 @@ export class PdfView extends FileView {
 				else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); this.openSearchBar(); }
 				return;
 			}
-			// Shift = snap active indicator
-			if (e.key === 'Shift') {
+			// Alt = snap active indicator
+			if (e.key === 'Alt') {
 				const drawingTool = this.currentTool === 'pen' || this.currentTool === 'highlighter' || this.currentTool === 'eraser';
 				if (drawingTool) this.snapDirBtnEl?.classList.add('via-btn-snap-active');
 				return;
@@ -135,7 +135,7 @@ export class PdfView extends FileView {
 			if (tool !== undefined) { e.preventDefault(); this.setTool(tool); }
 		});
 		this.registerDomEvent(this.containerEl as HTMLElement, 'keyup', (e: KeyboardEvent) => {
-			if (e.key === 'Shift') this.snapDirBtnEl?.classList.remove('via-btn-snap-active');
+			if (e.key === 'Alt') this.snapDirBtnEl?.classList.remove('via-btn-snap-active');
 		});
 	}
 
@@ -700,7 +700,7 @@ export class PdfView extends FileView {
 		if (!this.snapDirBtnEl) return;
 		const labels = { horizontal: '⟷ H', vertical: '↕ V', slope: '↗ 45°' };
 		this.snapDirBtnEl.textContent = labels[this.snapDirection];
-		this.snapDirBtnEl.title = `Snap: ${this.snapDirection} — click to cycle (hold Shift while drawing to activate)`;
+		this.snapDirBtnEl.title = `Snap: ${this.snapDirection} — click to cycle (hold Alt while drawing to activate)`;
 	}
 
 	/** Constrain `raw` to the current snap direction from `origin`. */
@@ -808,7 +808,7 @@ export class PdfView extends FileView {
 		annotCanvas.addEventListener('pointermove', e => {
 			if (!this.isDrawing || !this.currentPath) return;
 			const raw = getPos(e);
-			if (e.shiftKey && this.currentPath.points.length >= 1) {
+			if (e.altKey && this.currentPath.points.length >= 1) {
 				const origin = this.currentPath.points[0]!;
 				const snapped = this.snapPoint(origin, raw);
 				// Replace last point to keep a clean constrained stroke
@@ -820,7 +820,7 @@ export class PdfView extends FileView {
 				this.snapDirBtnEl?.classList.add('via-btn-snap-active');
 			} else {
 				this.currentPath.points.push(raw);
-				if (!e.shiftKey) this.snapDirBtnEl?.classList.remove('via-btn-snap-active');
+				if (!e.altKey) this.snapDirBtnEl?.classList.remove('via-btn-snap-active');
 			}
 			this.redrawAnnotations(ctx, this.currentPath);
 		});
