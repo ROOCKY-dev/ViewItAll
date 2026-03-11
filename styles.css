@@ -223,3 +223,51 @@
 	gap: 8px;
 	margin-top: 16px;
 }
+
+/* ── Color picker swatches ──────────────────────────────────────────────── */
+.via-pdf-color-section {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+}
+
+.via-color-swatch {
+	width: 20px;
+	height: 20px;
+	border-radius: 50%;
+	border: 2px solid transparent;
+	cursor: pointer;
+	padding: 0;
+	flex-shrink: 0;
+	outline: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+	transition: transform 0.1s, box-shadow 0.1s;
+}
+
+.via-color-swatch:hover {
+	transform: scale(1.2);
+}
+
+.via-color-swatch-active {
+	border-color: var(--background-primary);
+	box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18), 0 0 0 2px var(--text-normal);
+}
+
+.via-color-custom {
+	background: conic-gradient(from 0deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+	position: relative;
+}
+
+.via-color-custom-input {
+	position: absolute;
+	width: 0;
+	height: 0;
+	opacity: 0;
+	border: none;
+	padding: 0;
+	top: 0;
+	left: 0;
+}

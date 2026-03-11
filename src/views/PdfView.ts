@@ -59,6 +59,15 @@ export class PdfView extends FileView {
 	// Incremented on reload/zoom to cancel in-flight async renders
 	private _renderGen = 0;
 
+	// Color picker
+	private colorSectionEl: HTMLElement | null = null;
+	private colorSepEl: HTMLElement | null = null;
+	private colorSwatchEls: HTMLButtonElement[] = [];
+	private colorCustomInputEl: HTMLInputElement | null = null;
+
+	private readonly PEN_PRESETS    = ['#e03131', '#1971c2', '#2f9e44', '#212529', '#e8590c', '#7048e8'];
+	private readonly HIGHLIGHT_PRESETS = ['#ffd43b', '#22b8cf', '#f783ac', '#69db7c', '#ffa94d', '#da77f2'];
+
 	constructor(leaf: WorkspaceLeaf, plugin: ViewItAllPlugin) {
 		super(leaf);
 		this.plugin = plugin;
@@ -255,6 +264,32 @@ export class PdfView extends FileView {
 
 		bar.createEl('div', { cls: 'via-toolbar-sep' });
 
+		// Color picker section — shown only when pen / highlighter is active
+		this.colorSwatchEls = [];
+		this.colorSectionEl = bar.createEl('div', { cls: 'via-pdf-color-section' });
+		const initPresets = this.currentTool === 'highlighter' ? this.HIGHLIGHT_PRESETS : this.PEN_PRESETS;
+		for (const color of initPresets) {
+			const swatch = this.colorSectionEl.createEl('button', { cls: 'via-color-swatch' });
+			swatch.style.background = color;
+			swatch.dataset.color = color;
+			swatch.title = color;
+			swatch.addEventListener('click', () => this.applyColor(swatch.dataset.color!));
+			this.colorSwatchEls.push(swatch);
+		}
+		const customLabel = this.colorSectionEl.createEl('label', { cls: 'via-color-swatch via-color-custom', title: 'Custom colour' });
+		const customInput = customLabel.createEl('input');
+		customInput.type = 'color';
+		customInput.className = 'via-color-custom-input';
+		this.colorCustomInputEl = customInput;
+		customInput.addEventListener('input', () => this.applyColor(customInput.value));
+
+		this.colorSepEl = bar.createEl('div', { cls: 'via-toolbar-sep' });
+
+		const showColors = this.currentTool === 'pen' || this.currentTool === 'highlighter';
+		this.colorSectionEl.style.display = showColors ? 'flex' : 'none';
+		this.colorSepEl.style.display     = showColors ? '' : 'none';
+		if (showColors) this.syncColorPicker(this.currentTool as 'pen' | 'highlighter');
+
 		const zoomOut = bar.createEl('button', { cls: 'via-btn via-btn-zoom', text: '\u2212' });
 		zoomOut.title = 'Zoom out (Ctrl+\u2212)';
 		zoomOut.addEventListener('click', () => this.stepZoom(-1));
@@ -422,6 +457,45 @@ export class PdfView extends FileView {
 			b.classList.toggle('via-btn-active', (b as HTMLElement).dataset.tool === tool)
 		);
 		this.updateCanvasInteraction();
+		const showColors = tool === 'pen' || tool === 'highlighter';
+		if (this.colorSectionEl) this.colorSectionEl.style.display = showColors ? 'flex' : 'none';
+		if (this.colorSepEl)     this.colorSepEl.style.display     = showColors ? '' : 'none';
+		if (showColors) this.syncColorPicker(tool);
+	}
+
+	// Color picker ------------------------------------------------------------
+
+	private syncColorPicker(tool: 'pen' | 'highlighter'): void {
+		const presets     = tool === 'pen' ? this.PEN_PRESETS : this.HIGHLIGHT_PRESETS;
+		const activeColor = (tool === 'pen'
+			? this.plugin.settings.penColor
+			: this.plugin.settings.highlighterColor
+		).toLowerCase();
+
+		for (let i = 0; i < this.colorSwatchEls.length; i++) {
+			const swatch = this.colorSwatchEls[i];
+			if (!swatch) continue;
+			const color = presets[i] ?? '';
+			swatch.style.background = color;
+			swatch.dataset.color    = color;
+			swatch.title            = color;
+			swatch.classList.toggle('via-color-swatch-active', color.toLowerCase() === activeColor);
+		}
+
+		if (this.colorCustomInputEl) {
+			this.colorCustomInputEl.value = activeColor;
+			const isCustom = !presets.some(c => c.toLowerCase() === activeColor);
+			this.colorCustomInputEl.parentElement?.classList.toggle('via-color-swatch-active', isCustom);
+		}
+	}
+
+	private applyColor(color: string): void {
+		const tool = this.currentTool;
+		if (tool !== 'pen' && tool !== 'highlighter') return;
+		if (tool === 'pen') this.plugin.settings.penColor = color;
+		else                this.plugin.settings.highlighterColor = color;
+		this.plugin.saveSettings();
+		this.syncColorPicker(tool);
 	}
 
 	// Page jump --------------------------------------------------------------
