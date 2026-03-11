@@ -36,10 +36,10 @@
 
 | ID | Feature | Notes |
 |----|---------|-------|
-| `pdf-width-slider` | **PDF: Width & opacity sliders** | Inline expanding slider; persist per tool |
-| `pdf-text-search` | **PDF: Full-text search** | Ctrl+F; pdfjs getTextContent; highlight + prev/next |
-| `docx-undo-redo` | **DOCX: Undo/redo** | execCommand undo/redo; toolbar buttons; dirty-state asterisk |
-| `toolbar-position` | **Both: Configurable toolbar position** | top/bottom/left/right/floating; per file-type setting |
+| `pdf-width-slider` | **PDF: Width & opacity sliders** | ✅ Inline slider; persist per tool |
+| `pdf-text-search` | **PDF: Full-text search** | ✅ Ctrl+F; pdfjs getTextContent; highlight + prev/next |
+| `docx-undo-redo` | **DOCX: Undo/redo** | ✅ execCommand undo/redo; toolbar buttons; dirty-state indicator |
+| `toolbar-position` | **Both: Configurable toolbar position** | ✅ top/bottom; per file-type setting |
 
 ---
 
@@ -54,7 +54,7 @@
 
 ---
 
-## 🔭 Post-1.0.0 (Future)
+## 🔭 Post- release (Future)
 
 | ID | Feature |
 |----|---------|

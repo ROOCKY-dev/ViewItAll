@@ -2,12 +2,15 @@ import { App, PluginSettingTab, Setting } from 'obsidian';
 import type ViewItAllPlugin from './main';
 
 export type OpenMode = 'tab' | 'sidebar-right';
+export type ToolbarPosition = 'top' | 'bottom';
 
 export interface PluginSettings {
 	docxOpenMode: OpenMode;
+	docxToolbarPosition: ToolbarPosition;
 	docxDefaultEditMode: boolean;
 	confirmOnSave: boolean;
 	pdfOpenMode: OpenMode;
+	pdfToolbarPosition: ToolbarPosition;
 	pdfDefaultTool: 'none' | 'pen' | 'highlighter';
 	penColor: string;
 	penWidth: number;
@@ -19,9 +22,11 @@ export interface PluginSettings {
 
 export const DEFAULT_SETTINGS: PluginSettings = {
 	docxOpenMode: 'tab',
+	docxToolbarPosition: 'top',
 	docxDefaultEditMode: false,
 	confirmOnSave: true,
 	pdfOpenMode: 'tab',
+	pdfToolbarPosition: 'top',
 	pdfDefaultTool: 'none',
 	penColor: '#e03131',
 	penWidth: 2,
@@ -75,6 +80,20 @@ export class ViewItAllSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName('Toolbar position')
+			.setDesc('Where to pin the DOCX toolbar.')
+			.addDropdown(dd =>
+				dd
+					.addOption('top', 'Top')
+					.addOption('bottom', 'Bottom')
+					.setValue(this.plugin.settings.docxToolbarPosition)
+					.onChange(async v => {
+						this.plugin.settings.docxToolbarPosition = v as ToolbarPosition;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
 			.setName('Confirm before saving')
 			.setDesc('Show a confirmation dialog before overwriting the original .docx file.')
 			.addToggle(t =>
@@ -119,6 +138,20 @@ export class ViewItAllSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName('Toolbar position')
+			.setDesc('Where to pin the PDF toolbar.')
+			.addDropdown(dd =>
+				dd
+					.addOption('top', 'Top')
+					.addOption('bottom', 'Bottom')
+					.setValue(this.plugin.settings.pdfToolbarPosition)
+					.onChange(async v => {
+						this.plugin.settings.pdfToolbarPosition = v as ToolbarPosition;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
 			.setName('Pen color')
 			.addColorPicker(cp =>
 				cp
@@ -133,7 +166,7 @@ export class ViewItAllSettingTab extends PluginSettingTab {
 			.setName('Pen width')
 			.addSlider(sl =>
 				sl
-					.setLimits(1, 10, 1)
+					.setLimits(1, 20, 1)
 					.setValue(this.plugin.settings.penWidth)
 					.setDynamicTooltip()
 					.onChange(async v => {
@@ -157,11 +190,24 @@ export class ViewItAllSettingTab extends PluginSettingTab {
 			.setName('Highlighter width')
 			.addSlider(sl =>
 				sl
-					.setLimits(8, 40, 2)
+					.setLimits(10, 40, 2)
 					.setValue(this.plugin.settings.highlighterWidth)
 					.setDynamicTooltip()
 					.onChange(async v => {
 						this.plugin.settings.highlighterWidth = v;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName('Highlighter opacity')
+			.addSlider(sl =>
+				sl
+					.setLimits(0.1, 1.0, 0.05)
+					.setValue(this.plugin.settings.highlighterOpacity)
+					.setDynamicTooltip()
+					.onChange(async v => {
+						this.plugin.settings.highlighterOpacity = v;
 						await this.plugin.saveSettings();
 					})
 			);

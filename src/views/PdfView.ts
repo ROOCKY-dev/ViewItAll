@@ -1,5 +1,6 @@
 import { FileView, TFile, WorkspaceLeaf, Notice } from 'obsidian';
 import * as pdfjsLib from 'pdfjs-dist';
+import type { TextItem as PdfTextItem } from 'pdfjs-dist/types/src/display/api';
 import { VIEW_TYPE_PDF } from '../types';
 import type { PageAnnotations, AnnotationPath, AnnotationFile } from '../types';
 import {
@@ -30,8 +31,14 @@ interface PageCtx {
 	container: HTMLElement;
 	pdfCanvas: HTMLCanvasElement | null;
 	annotCanvas: HTMLCanvasElement | null;
+	searchCanvas: HTMLCanvasElement | null;
 	w: number;
 	h: number;
+}
+
+interface SearchMatch {
+	pageNum: number;
+	x: number; y: number; w: number; h: number; // normalised 0-1
 }
 
 export class PdfView extends FileView {
@@ -68,6 +75,24 @@ export class PdfView extends FileView {
 	private readonly PEN_PRESETS    = ['#e03131', '#1971c2', '#2f9e44', '#212529', '#e8590c', '#7048e8'];
 	private readonly HIGHLIGHT_PRESETS = ['#ffd43b', '#22b8cf', '#f783ac', '#69db7c', '#ffa94d', '#da77f2'];
 
+	// Width / opacity sliders
+	private widthSectionEl: HTMLElement | null = null;
+	private widthSepEl: HTMLElement | null = null;
+	private widthLabelEl: HTMLElement | null = null;
+	private widthSliderEl: HTMLInputElement | null = null;
+	private opacityRowEl: HTMLElement | null = null;
+	private opacityLabelEl: HTMLElement | null = null;
+	private opacitySliderEl: HTMLInputElement | null = null;
+
+	// Text search
+	private wrapperEl: HTMLElement | null = null;
+	private searchBarEl: HTMLElement | null = null;
+	private searchInputEl: HTMLInputElement | null = null;
+	private searchMatchCountEl: HTMLElement | null = null;
+	private searchMatches: SearchMatch[] = [];
+	private searchCurrentIdx = -1;
+	private _textCache = new Map<number, PdfTextItem[]>();
+
 	constructor(leaf: WorkspaceLeaf, plugin: ViewItAllPlugin) {
 		super(leaf);
 		this.plugin = plugin;
@@ -82,6 +107,7 @@ export class PdfView extends FileView {
 				if (e.key === '0') { e.preventDefault(); this.setZoom(1.0, this.viewportCenterFrac()); }
 				else if (e.key === '=' || e.key === '+') { e.preventDefault(); this.stepZoom(+1); }
 				else if (e.key === '-') { e.preventDefault(); this.stepZoom(-1); }
+				else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); this.openSearchBar(); }
 				return;
 			}
 			// Tool shortcuts — guard: don't fire when an input/textarea is focused
@@ -112,6 +138,9 @@ export class PdfView extends FileView {
 		this.pageObserver?.disconnect(); this.pageObserver = null;
 		if (this.pdfDoc) { this.pdfDoc.destroy(); this.pdfDoc = null; }
 		this.pages = [];
+		this._textCache.clear();
+		this.searchMatches = [];
+		this.searchCurrentIdx = -1;
 		this.contentEl.empty();
 	}
 
@@ -121,10 +150,17 @@ export class PdfView extends FileView {
 		this._renderGen++;
 		this.contentEl.empty();
 		this.pages = [];
+		this._textCache.clear();
+		this.searchMatches = [];
+		this.searchCurrentIdx = -1;
 		this.renderObserver?.disconnect(); this.renderObserver = null;
 		this.pageObserver?.disconnect(); this.pageObserver = null;
 
+		const isBottom = this.plugin.settings.pdfToolbarPosition === 'bottom';
 		const wrapper = this.contentEl.createEl('div', { cls: 'via-pdf-wrapper' });
+		if (isBottom) wrapper.classList.add('via-pdf-wrapper--toolbar-bottom');
+		this.wrapperEl = wrapper;
+
 		const toolbar = this.buildToolbar();
 		wrapper.appendChild(toolbar);
 
@@ -165,7 +201,7 @@ export class PdfView extends FileView {
 			const container = scrollArea.createEl('div', { cls: 'via-pdf-page' });
 			container.style.cssText = `width:${w}px;height:${h}px;min-width:${w}px;min-height:${h}px`;
 			scrollArea.createEl('div', { cls: 'via-pdf-page-label', text: `${i + 1} / ${numPages}` });
-			this.pages.push({ pageNum: i + 1, state: 'placeholder', container, pdfCanvas: null, annotCanvas: null, w, h });
+			this.pages.push({ pageNum: i + 1, state: 'placeholder', container, pdfCanvas: null, annotCanvas: null, searchCanvas: null, w, h });
 		}
 
 		if (this.pageIndicatorEl) this.pageIndicatorEl.textContent = `1 / ${numPages}`;
@@ -217,19 +253,24 @@ export class PdfView extends FileView {
 		const annotCanvas = ctx.container.createEl('canvas', { cls: 'via-pdf-annot-canvas' });
 		annotCanvas.width = ctx.w; annotCanvas.height = ctx.h;
 
+		const searchCanvas = ctx.container.createEl('canvas', { cls: 'via-pdf-search-canvas' });
+		searchCanvas.width = ctx.w; searchCanvas.height = ctx.h;
+
 		await page.render({ canvasContext: pdfCanvas.getContext('2d')!, viewport }).promise;
 
 		if (gen !== this._renderGen) {
-			pdfCanvas.remove(); annotCanvas.remove();
+			pdfCanvas.remove(); annotCanvas.remove(); searchCanvas.remove();
 			ctx.state = 'placeholder';
 			return;
 		}
 
 		ctx.pdfCanvas = pdfCanvas;
 		ctx.annotCanvas = annotCanvas;
+		ctx.searchCanvas = searchCanvas;
 		ctx.state = 'rendered';
 
 		this.redrawAnnotations(ctx);
+		if (this.searchMatches.length > 0) this.drawSearchHighlightsForPage(ctx);
 		this.attachDrawListeners(ctx);
 		this.updateCanvasInteraction();
 	}
@@ -238,6 +279,7 @@ export class PdfView extends FileView {
 		if (ctx.state !== 'rendered') return;
 		ctx.pdfCanvas?.remove(); ctx.pdfCanvas = null;
 		ctx.annotCanvas?.remove(); ctx.annotCanvas = null;
+		ctx.searchCanvas?.remove(); ctx.searchCanvas = null;
 		ctx.state = 'placeholder';
 	}
 
@@ -299,6 +341,42 @@ export class PdfView extends FileView {
 		this.colorSectionEl.style.display = showColors ? 'flex' : 'none';
 		this.colorSepEl.style.display     = showColors ? '' : 'none';
 		if (showColors) this.syncColorPicker(this.currentTool as 'pen' | 'highlighter');
+
+		// Width / opacity slider section
+		this.widthSectionEl = bar.createEl('div', { cls: 'via-pdf-width-section' });
+
+		const widthRow = this.widthSectionEl.createEl('div', { cls: 'via-pdf-width-row' });
+		widthRow.createEl('span', { cls: 'via-pdf-slider-label', text: 'Size' });
+		this.widthSliderEl = widthRow.createEl('input');
+		this.widthSliderEl.type = 'range';
+		this.widthSliderEl.className = 'via-pdf-slider';
+		this.widthLabelEl = widthRow.createEl('span', { cls: 'via-pdf-slider-value' });
+
+		this.widthSliderEl.addEventListener('input', () => {
+			const v = Number(this.widthSliderEl!.value);
+			if (this.widthLabelEl) this.widthLabelEl.textContent = `${v}px`;
+		});
+		this.widthSliderEl.addEventListener('change', () => this.applyWidth(Number(this.widthSliderEl!.value)));
+
+		this.opacityRowEl = this.widthSectionEl.createEl('div', { cls: 'via-pdf-width-row' });
+		this.opacityRowEl.createEl('span', { cls: 'via-pdf-slider-label', text: 'Opacity' });
+		this.opacitySliderEl = this.opacityRowEl.createEl('input');
+		this.opacitySliderEl.type = 'range';
+		this.opacitySliderEl.min = '0.1'; this.opacitySliderEl.max = '1.0'; this.opacitySliderEl.step = '0.05';
+		this.opacitySliderEl.className = 'via-pdf-slider';
+		this.opacityLabelEl = this.opacityRowEl.createEl('span', { cls: 'via-pdf-slider-value' });
+
+		this.opacitySliderEl.addEventListener('input', () => {
+			const v = Number(this.opacitySliderEl!.value);
+			if (this.opacityLabelEl) this.opacityLabelEl.textContent = `${Math.round(v * 100)}%`;
+		});
+		this.opacitySliderEl.addEventListener('change', () => this.applyOpacity(Number(this.opacitySliderEl!.value)));
+
+		this.widthSepEl = bar.createEl('div', { cls: 'via-toolbar-sep' });
+
+		this.widthSectionEl.style.display = showColors ? 'flex' : 'none';
+		this.widthSepEl.style.display     = showColors ? '' : 'none';
+		if (showColors) this.syncWidthSlider(this.currentTool as 'pen' | 'highlighter');
 
 		const zoomOut = bar.createEl('button', { cls: 'via-btn via-btn-zoom', text: '\u2212' });
 		zoomOut.title = 'Zoom out (Ctrl+\u2212)';
@@ -470,7 +548,12 @@ export class PdfView extends FileView {
 		const showColors = tool === 'pen' || tool === 'highlighter';
 		if (this.colorSectionEl) this.colorSectionEl.style.display = showColors ? 'flex' : 'none';
 		if (this.colorSepEl)     this.colorSepEl.style.display     = showColors ? '' : 'none';
-		if (showColors) this.syncColorPicker(tool);
+		if (this.widthSectionEl) this.widthSectionEl.style.display = showColors ? 'flex' : 'none';
+		if (this.widthSepEl)     this.widthSepEl.style.display     = showColors ? '' : 'none';
+		if (showColors) {
+			this.syncColorPicker(tool);
+			this.syncWidthSlider(tool);
+		}
 	}
 
 	// Color picker ------------------------------------------------------------
@@ -506,6 +589,45 @@ export class PdfView extends FileView {
 		else                this.plugin.settings.highlighterColor = color;
 		this.plugin.saveSettings();
 		this.syncColorPicker(tool);
+	}
+
+	// Width / opacity slider -------------------------------------------------
+
+	private syncWidthSlider(tool: 'pen' | 'highlighter'): void {
+		if (!this.widthSliderEl || !this.widthLabelEl) return;
+
+		if (tool === 'pen') {
+			this.widthSliderEl.min = '1'; this.widthSliderEl.max = '20'; this.widthSliderEl.step = '1';
+			const w = this.plugin.settings.penWidth;
+			this.widthSliderEl.value = String(w);
+			this.widthLabelEl.textContent = `${w}px`;
+		} else {
+			this.widthSliderEl.min = '10'; this.widthSliderEl.max = '40'; this.widthSliderEl.step = '2';
+			const w = this.plugin.settings.highlighterWidth;
+			this.widthSliderEl.value = String(w);
+			this.widthLabelEl.textContent = `${w}px`;
+		}
+
+		const showOpacity = tool === 'highlighter';
+		if (this.opacityRowEl) this.opacityRowEl.style.display = showOpacity ? 'flex' : 'none';
+		if (showOpacity && this.opacitySliderEl && this.opacityLabelEl) {
+			const op = this.plugin.settings.highlighterOpacity;
+			this.opacitySliderEl.value = String(op);
+			this.opacityLabelEl.textContent = `${Math.round(op * 100)}%`;
+		}
+	}
+
+	private applyWidth(value: number): void {
+		const tool = this.currentTool;
+		if (tool !== 'pen' && tool !== 'highlighter') return;
+		if (tool === 'pen') this.plugin.settings.penWidth = value;
+		else                this.plugin.settings.highlighterWidth = value;
+		this.plugin.saveSettings();
+	}
+
+	private applyOpacity(value: number): void {
+		this.plugin.settings.highlighterOpacity = value;
+		this.plugin.saveSettings();
 	}
 
 	// Page jump --------------------------------------------------------------
@@ -579,7 +701,8 @@ export class PdfView extends FileView {
 					? this.plugin.settings.penWidth
 					: this.currentTool === 'highlighter'
 						? this.plugin.settings.highlighterWidth
-						: 20,
+						: this.plugin.settings.eraserWidth,
+				opacity: this.currentTool === 'highlighter' ? this.plugin.settings.highlighterOpacity : 1,
 				points: [getPos(e)],
 			};
 		});
@@ -616,7 +739,8 @@ export class PdfView extends FileView {
 			if (path.points.length < 2) return;
 			c.save();
 			if (path.tool === 'highlighter') {
-				c.globalAlpha = 0.35; c.globalCompositeOperation = 'multiply';
+				c.globalAlpha = path.opacity ?? this.plugin.settings.highlighterOpacity;
+				c.globalCompositeOperation = 'multiply';
 			} else if (path.tool === 'eraser') {
 				c.globalCompositeOperation = 'destination-out'; c.globalAlpha = 1;
 			} else {
@@ -666,5 +790,187 @@ export class PdfView extends FileView {
 		} catch (err) {
 			new Notice(`\u274c Failed to save annotations: ${String(err)}`);
 		}
+	}
+
+	// Text search ------------------------------------------------------------
+
+	private openSearchBar(): void {
+		if (this.searchBarEl) { this.searchInputEl?.focus(); return; }
+		if (!this.wrapperEl) return;
+
+		const bar = this.wrapperEl.createEl('div', { cls: 'via-pdf-search-bar' });
+		this.searchBarEl = bar;
+
+		const searchIcon = bar.createEl('span', { cls: 'via-pdf-search-icon', text: '🔍' });
+		searchIcon.style.flexShrink = '0';
+
+		this.searchInputEl = bar.createEl('input');
+		this.searchInputEl.type = 'text';
+		this.searchInputEl.placeholder = 'Search…';
+		this.searchInputEl.className = 'via-pdf-search-input';
+
+		this.searchMatchCountEl = bar.createEl('span', { cls: 'via-pdf-search-count', text: '' });
+
+		const prevBtn = bar.createEl('button', { cls: 'via-btn', text: '↑' });
+		prevBtn.title = 'Previous match (Shift+Enter)';
+		prevBtn.addEventListener('click', () => this.goToMatch(this.searchCurrentIdx - 1));
+
+		const nextBtn = bar.createEl('button', { cls: 'via-btn', text: '↓' });
+		nextBtn.title = 'Next match (Enter)';
+		nextBtn.addEventListener('click', () => this.goToMatch(this.searchCurrentIdx + 1));
+
+		const closeBtn = bar.createEl('button', { cls: 'via-btn', text: '✕' });
+		closeBtn.title = 'Close search (Escape)';
+		closeBtn.addEventListener('click', () => this.closeSearchBar());
+
+		this.searchInputEl.addEventListener('keydown', (e) => {
+			e.stopPropagation();
+			if (e.key === 'Enter') {
+				e.preventDefault();
+				e.shiftKey ? this.goToMatch(this.searchCurrentIdx - 1) : this.goToMatch(this.searchCurrentIdx + 1);
+			} else if (e.key === 'Escape') {
+				e.preventDefault();
+				this.closeSearchBar();
+			}
+		});
+
+		let debounce: ReturnType<typeof setTimeout> | null = null;
+		this.searchInputEl.addEventListener('input', () => {
+			if (debounce) clearTimeout(debounce);
+			debounce = setTimeout(() => this.performSearch(this.searchInputEl!.value), 300);
+		});
+
+		// Insert search bar: after toolbar (first child), before scroll area
+		const scrollArea = this.scrollAreaEl;
+		if (scrollArea) this.wrapperEl.insertBefore(bar, scrollArea);
+
+		this.searchInputEl.focus();
+	}
+
+	private closeSearchBar(): void {
+		this.searchMatches = [];
+		this.searchCurrentIdx = -1;
+		this.clearAllSearchHighlights();
+		this.updateSearchCount();
+		this.searchBarEl?.remove();
+		this.searchBarEl = null;
+		this.searchInputEl = null;
+		this.searchMatchCountEl = null;
+	}
+
+	private async performSearch(query: string): Promise<void> {
+		this.searchMatches = [];
+		this.searchCurrentIdx = -1;
+		this.clearAllSearchHighlights();
+
+		if (!query.trim() || !this.pdfDoc) {
+			this.updateSearchCount();
+			return;
+		}
+
+		const q = query.toLowerCase();
+		const total = this.pdfDoc.numPages;
+
+		for (let pn = 1; pn <= total; pn++) {
+			const items = await this.getPageTextItems(pn);
+			const page = await this.pdfDoc!.getPage(pn);
+			const vp = page.getViewport({ scale: 1.0 });
+
+			for (const item of items) {
+				const str = item.str.toLowerCase();
+				let idx = 0;
+				while ((idx = str.indexOf(q, idx)) !== -1) {
+					const tx = item.transform[4] ?? 0;
+					const ty = item.transform[5] ?? 0;
+					const fontSize = Math.abs(item.transform[3] ?? 12);
+					const charWidth = (item.width || 0) / (item.str.length || 1);
+					const matchX = tx + charWidth * idx;
+					const matchW = charWidth * query.length;
+
+					const [cx, cy]   = vp.convertToViewportPoint(matchX, ty);
+					const [cx2, cy2] = vp.convertToViewportPoint(matchX + matchW, ty - fontSize);
+
+					this.searchMatches.push({
+						pageNum: pn,
+						x: Math.min(cx, cx2) / vp.width,
+						y: Math.min(cy, cy2) / vp.height,
+						w: Math.abs(cx2 - cx) / vp.width,
+						h: Math.abs(cy2 - cy) / vp.height,
+					});
+					idx += q.length;
+				}
+			}
+		}
+
+		if (this.searchMatches.length > 0) {
+			this.searchCurrentIdx = 0;
+			this.scrollToMatch(0);
+		}
+
+		this.updateSearchCount();
+		this.redrawAllSearchHighlights();
+	}
+
+	private goToMatch(idx: number): void {
+		if (this.searchMatches.length === 0) return;
+		this.searchCurrentIdx = ((idx % this.searchMatches.length) + this.searchMatches.length) % this.searchMatches.length;
+		this.scrollToMatch(this.searchCurrentIdx);
+		this.updateSearchCount();
+		this.redrawAllSearchHighlights();
+	}
+
+	private scrollToMatch(idx: number): void {
+		const m = this.searchMatches[idx];
+		if (!m) return;
+		const ctx = this.pages.find(p => p.pageNum === m.pageNum);
+		if (ctx) ctx.container.scrollIntoView({ behavior: 'smooth', block: 'center' });
+	}
+
+	private updateSearchCount(): void {
+		if (!this.searchMatchCountEl) return;
+		if (this.searchMatches.length === 0) {
+			this.searchMatchCountEl.textContent = this.searchInputEl?.value.trim() ? 'No matches' : '';
+		} else {
+			this.searchMatchCountEl.textContent = `${this.searchCurrentIdx + 1} / ${this.searchMatches.length}`;
+		}
+	}
+
+	private drawSearchHighlightsForPage(ctx: PageCtx): void {
+		if (!ctx.searchCanvas) return;
+		const canvas = ctx.searchCanvas;
+		const c = canvas.getContext('2d')!;
+		c.clearRect(0, 0, canvas.width, canvas.height);
+
+		for (let i = 0; i < this.searchMatches.length; i++) {
+			const m = this.searchMatches[i]!;
+			if (m.pageNum !== ctx.pageNum) continue;
+			c.fillStyle = i === this.searchCurrentIdx
+				? 'rgba(255, 140, 0, 0.55)'
+				: 'rgba(255, 220, 0, 0.38)';
+			c.fillRect(m.x * canvas.width, m.y * canvas.height, m.w * canvas.width, m.h * canvas.height);
+		}
+	}
+
+	private redrawAllSearchHighlights(): void {
+		for (const ctx of this.pages) {
+			if (ctx.state === 'rendered') this.drawSearchHighlightsForPage(ctx);
+		}
+	}
+
+	private clearAllSearchHighlights(): void {
+		for (const ctx of this.pages) {
+			if (!ctx.searchCanvas) continue;
+			const c = ctx.searchCanvas.getContext('2d')!;
+			c.clearRect(0, 0, ctx.searchCanvas.width, ctx.searchCanvas.height);
+		}
+	}
+
+	private async getPageTextItems(pageNum: number): Promise<PdfTextItem[]> {
+		if (this._textCache.has(pageNum)) return this._textCache.get(pageNum)!;
+		const page = await this.pdfDoc!.getPage(pageNum);
+		const tc   = await page.getTextContent();
+		const items = tc.items.filter((it): it is PdfTextItem => 'str' in it);
+		this._textCache.set(pageNum, items);
+		return items;
 	}
 }
