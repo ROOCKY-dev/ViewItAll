@@ -571,71 +571,127 @@
 
 /* ── Text note overlays ─────────────────────────────────────────────── */
 
+/* ── Text note overlays — redesigned ─────────────────────────────────── */
+
 .via-pdf-note {
+    /* Position & size */
     position: absolute;
-    width: 168px;
-    min-height: 80px;
-    border-radius: var(--radius-m);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18), 0 1px 4px rgba(0, 0, 0, 0.1);
+    width: 192px;
+    min-width: 140px;
+    max-width: 400px;
+    min-height: 108px;
+    transform: translate(-4px, -4px);
     z-index: 10;
+    resize: both;
+    overflow: hidden;
+
+    /* Appearance — neutral card with colored top accent */
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-top: 4px solid var(--note-color, #ffd966);
+    border-radius: 0 0 var(--radius-m) var(--radius-m);
+    box-shadow:
+        0 6px 24px rgba(0, 0, 0, 0.13),
+        0 2px 6px rgba(0, 0, 0, 0.07),
+        0 0 0 1px rgba(0, 0, 0, 0.04);
+
     display: flex;
     flex-direction: column;
-    overflow: hidden;
-    transform: translate(-4px, -4px);
+    transition: box-shadow 120ms ease;
 }
 
+/* Lift shadow on hover/focus so the note reads as interactive */
+.via-pdf-note:hover,
+.via-pdf-note:focus-within {
+    box-shadow:
+        0 10px 32px rgba(0, 0, 0, 0.18),
+        0 3px 10px rgba(0, 0, 0, 0.10),
+        0 0 0 2px var(--note-color, #ffd966);
+    z-index: 12;
+}
+
+/* Header row — invisible until hover for a cleaner default state */
 .via-pdf-note-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 2px var(--size-4-2);
-    background: rgba(0, 0, 0, 0.1);
+    gap: var(--size-4-2);
     flex-shrink: 0;
-    cursor: default;
-    gap: 4px;
+    min-height: 22px;
+    /* Controls fade in on note hover */
+    opacity: 0;
+    transition: opacity 120ms ease;
+    background: transparent;
+}
+.via-pdf-note:hover .via-pdf-note-header,
+.via-pdf-note:focus-within .via-pdf-note-header {
+    opacity: 1;
 }
 
+/* Drag handle */
 .via-pdf-note-drag {
     display: flex;
     align-items: center;
     cursor: grab;
-    color: rgba(0, 0, 0, 0.4);
+    color: var(--text-faint);
     user-select: none;
-    padding: 0 2px;
+    padding: 2px;
+    border-radius: var(--radius-s);
+    transition: color 80ms, background 80ms;
 }
+.via-pdf-note-drag:hover  { color: var(--text-muted); background: var(--background-modifier-hover); }
 .via-pdf-note-drag:active { cursor: grabbing; }
-.via-pdf-note-drag svg { width: 12px; height: 12px; }
+.via-pdf-note-drag svg    { width: 13px; height: 13px; }
 
+/* Color dot indicator (center of header) */
+.via-pdf-note-color-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--note-color, #ffd966);
+    flex-shrink: 0;
+    opacity: 0.7;
+    border: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+/* Delete button */
 .via-pdf-note-delete {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: none;
+    background: transparent;
     border: none;
     cursor: pointer;
-    width: 16px;
-    height: 16px;
+    width: 20px;
+    height: 20px;
     padding: 0;
     border-radius: var(--radius-s);
-    color: rgba(0, 0, 0, 0.4);
+    color: var(--text-faint);
     transition: background 80ms, color 80ms;
+    flex-shrink: 0;
 }
 .via-pdf-note-delete:hover {
-    background: rgba(0, 0, 0, 0.1);
-    color: rgba(0, 0, 0, 0.85);
+    background: var(--background-modifier-error-hover, rgba(255, 80, 80, 0.12));
+    color: var(--text-error);
 }
-.via-pdf-note-delete svg { width: 11px; height: 11px; }
+.via-pdf-note-delete svg { width: 12px; height: 12px; }
 
+/* Textarea */
 .via-pdf-note-text {
     flex: 1;
     border: none;
     background: transparent;
     resize: none;
-    padding: var(--size-4-2);
-    font-size: 0.82em;
+    padding: var(--size-4-1) var(--size-4-3) var(--size-4-3);
+    font-size: var(--font-ui-small);
     font-family: var(--font-text);
-    color: rgba(0, 0, 0, 0.75);
-    min-height: 56px;
+    color: var(--text-normal);
+    min-height: 72px;
     outline: none;
-    line-height: 1.4;
+    line-height: 1.5;
+}
+.via-pdf-note-text::placeholder {
+    color: var(--text-faint);
+    font-style: italic;
 }

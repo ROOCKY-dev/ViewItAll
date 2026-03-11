@@ -1017,8 +1017,11 @@ private renderNoteEl(note: TextNote, focusImmediately = false): void {
 const ctx = this.pages.find(p => p.pageNum === note.page);
 if (!ctx) return;
 
+const noteColor = note.color ?? this.plugin.settings.noteDefaultColor;
 const el = ctx.container.createEl('div', { cls: 'via-pdf-note' });
-el.style.cssText   = `left:${note.x * 100}%;top:${note.y * 100}%;background:${note.color ?? this.plugin.settings.noteDefaultColor}`;
+el.style.left = `${note.x * 100}%`;
+el.style.top  = `${note.y * 100}%`;
+el.style.setProperty('--note-color', noteColor);
 el.dataset.noteId  = note.id;
 
 const header = el.createEl('div', { cls: 'via-pdf-note-header' });
@@ -1048,6 +1051,9 @@ window.removeEventListener('mouseup',   onUp);
 window.addEventListener('mousemove', onMove);
 window.addEventListener('mouseup',   onUp);
 });
+
+// Color dot (center of header — visual identity at a glance)
+header.createEl('span', { cls: 'via-pdf-note-color-dot' });
 
 const deleteBtn = header.createEl('button', { cls: 'via-pdf-note-delete' });
 setIcon(deleteBtn, 'x');
