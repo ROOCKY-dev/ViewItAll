@@ -59,3 +59,15 @@
 ## 2026-03-11 | .Agent/ Restructure | 3 Files > 7 Files
 **Decision:** Consolidate governance from 7 files → `AGENT.md` + `STATUS.md` + `DECISIONS.md`. Add automated enforcement via ESLint + CSS checker.  
 **Why:** 7 files = ~6,000 boot tokens with massive redundancy (commit format appeared in 4 files). Consolidated = ~2,500 tokens, single source of truth per concern, automated rules that can't be "forgotten" by an agent. Maintenance burden drops from 7-file sync to 2 files that need updating (STATUS.md + DECISIONS.md).
+
+## 2026-03-11 | Sprint 7 | PPTX Model-First Parser Split
+**Decision:** Split PPTX parsing into dedicated modules under `src/views/pptx/` and expand the parsed model to include shape IDs, bounds, z-index, and style tokens (fill/stroke) while keeping current HTML rendering path intact.  
+**Why:** Current text-snapshot parsing blocks move/resize/format editing. A model-first parser enables incremental editor features without a risky full renderer rewrite and keeps `PptxView` focused on view lifecycle/UI concerns.
+
+## 2026-03-11 | Sprint 7 | PPTX Draft Persistence via Sidecar
+**Decision:** Persist PPTX edit-session transforms and style overrides in a companion sidecar file `<file>.pptx.edits.json`, loaded on open and saved via explicit toolbar action.  
+**Why:** Non-destructive draft persistence protects original `.pptx` during early editor phases, enables recovery across reloads, and keeps apply-to-PPTX writing as a separate, explicit action.
+
+## 2026-03-11 | Sprint 7 | Explicit Apply-to-PPTX Writeback
+**Decision:** Add a dedicated “Apply draft edits to PPTX” action that rewrites slide OOXML (`p:spPr/a:xfrm`, fill, stroke tokens), saves the binary `.pptx`, then clears draft sidecar edits.  
+**Why:** Users need both safe drafts and a deterministic commit step to modify source files. Explicit apply prevents accidental source mutation during iterative editing and avoids repeated double-application of transform deltas.

@@ -39,13 +39,12 @@ scripts/
   check-css.js                 # Automated CSS variable enforcement
 ```
 
-## Active: Sprint 6 (v1.5.0)
+## Active: Sprint 7 (v1.6.0)
 
-Planning phase. Targets:
-- `.xlsx` / `.csv` — SheetJS spreadsheet viewer
-- `.mp4` / `.mp3` / `.webm` — HTML5 media player
-- `enableXlsx`, `enableCsv`, `enableMedia` settings toggles
-- `CORE-06`: per-file-type enable/disable in settings
+In progress. Targets:
+- `.pptx` model-first parser + shape metadata extraction
+- Phase 1 editor groundwork (shape ids, bounds, style tokens)
+- Phase 2 next: move/resize + text editing + fill/stroke formatting
 
 ## Roadmap
 

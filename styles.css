@@ -906,6 +906,29 @@ thead .via-sheet-row-num {
     flex-shrink: 0;
 }
 
+.via-pptx-format-control {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-1);
+    flex-shrink: 0;
+}
+
+.via-pptx-format-label {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-faint);
+    user-select: none;
+}
+
+.via-pptx-format-select {
+    height: 22px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: var(--font-ui-smaller);
+    padding: 0 var(--size-4-1);
+}
+
 /* Body: strip + main */
 .via-pptx-body {
     display: flex;
@@ -1003,10 +1026,96 @@ thead .via-sheet-row-num {
     font-family: var(--font-text);
     color: var(--text-normal);
     line-height: 1.6;
+    position: relative;
+    transform-origin: top left;
+}
+
+.via-pptx-shape--editable {
+    cursor: move;
+    border-radius: var(--radius-s);
+    outline: 1px dashed transparent;
+    transition: outline-color 80ms, box-shadow 80ms;
+}
+
+.via-pptx-shape--editable:hover {
+    outline-color: var(--interactive-accent-hover);
+}
+
+.via-pptx-shape--editable.is-selected {
+    outline-color: var(--interactive-accent);
+    box-shadow: 0 0 0 1px var(--interactive-accent);
+}
+
+.via-pptx-shape-handle {
+    position: absolute;
+    width: var(--size-4-2);
+    height: var(--size-4-2);
+    border-radius: var(--radius-2xs);
+    border: 1px solid var(--background-primary);
+    background: var(--interactive-accent);
+    opacity: 0;
+    pointer-events: none;
+}
+
+.via-pptx-shape--editable.is-selected .via-pptx-shape-handle {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.via-pptx-shape-handle--nw {
+    left: calc(var(--size-4-1) * -1);
+    top: calc(var(--size-4-1) * -1);
+    cursor: nwse-resize;
+}
+
+.via-pptx-shape-handle--ne {
+    right: calc(var(--size-4-1) * -1);
+    top: calc(var(--size-4-1) * -1);
+    cursor: nesw-resize;
+}
+
+.via-pptx-shape-handle--sw {
+    left: calc(var(--size-4-1) * -1);
+    bottom: calc(var(--size-4-1) * -1);
+    cursor: nesw-resize;
+}
+
+.via-pptx-shape-handle--se {
+    right: calc(var(--size-4-1) * -1);
+    bottom: calc(var(--size-4-1) * -1);
+    cursor: nwse-resize;
 }
 
 .via-pptx-shape p {
     margin: 0.25em 0;
+}
+
+.via-pptx-shape[data-fill-style='accent'] {
+    background: var(--interactive-accent-hover);
+}
+
+.via-pptx-shape[data-fill-style='muted'] {
+    background: var(--background-secondary-alt);
+}
+
+.via-pptx-shape[data-fill-style='none'] {
+    background: transparent;
+}
+
+.via-pptx-shape[data-stroke-style='accent'] {
+    border: 1px solid var(--interactive-accent);
+}
+
+.via-pptx-shape[data-stroke-style='muted'] {
+    border: 1px solid var(--background-modifier-border-hover);
+}
+
+.via-pptx-shape[data-stroke-style='normal'] {
+    border: 1px solid var(--background-modifier-border);
+}
+
+.via-pptx-shape[data-stroke-style='none'] {
+    border: 1px solid transparent;
 }
 
 /* Title shapes */

@@ -1,50 +1,36 @@
-import { FileView, TFile, WorkspaceLeaf, setIcon, setTooltip } from 'obsidian';
+import { FileView, Notice, TFile, WorkspaceLeaf, setIcon, setTooltip } from 'obsidian';
 import { VIEW_TYPE_PPTX } from '../types';
 import type ViewItAllPlugin from '../main';
+import { parseSlidesFromZip } from './pptx/pptxParser';
+import type { JSZipConstructor, RunData, SlideData } from './pptx/pptxTypes';
+import { loadPptxEdits, savePptxEdits } from '../utils/pptxEdits';
+import { applyEditsToPptxZip } from './pptx/pptxWriter';
 
-/** Minimal JSZip type surface used by this view. */
-interface JSZipObject {
-	async(type: 'string'): Promise<string>;
-	async(type: 'uint8array'): Promise<Uint8Array>;
-	async(type: 'arraybuffer'): Promise<ArrayBuffer>;
-	async(type: 'base64'): Promise<string>;
+type DragMode = 'move' | 'resize';
+type ResizeHandle = 'nw' | 'ne' | 'sw' | 'se';
+
+interface ShapeEditState {
+	translateX: number;
+	translateY: number;
+	widthPx: number | null;
+	heightPx: number | null;
 }
 
-interface JSZipInstance {
-	file(path: string): JSZipObject | null;
-	file(regex: RegExp): { name: string }[];
-	loadAsync(data: ArrayBuffer | Uint8Array): Promise<JSZipInstance>;
+interface ShapeFormatState {
+	fillToken: string | null;
+	lineToken: string | null;
 }
 
-interface JSZipConstructor {
-	new(): JSZipInstance;
-	loadAsync(data: ArrayBuffer | Uint8Array): Promise<JSZipInstance>;
-}
-
-/** Run-level text data with formatting. */
-interface RunData {
-	text: string;
-	bold: boolean;
-	italic: boolean;
-}
-
-/** A paragraph within a shape. */
-interface ParagraphData {
-	runs: RunData[];
-	isBullet: boolean;
-}
-
-/** A shape extracted from a slide. */
-interface ShapeData {
-	type: 'title' | 'ctrTitle' | 'subTitle' | 'body' | 'other';
-	paragraphs: ParagraphData[];
-}
-
-/** Parsed slide data. */
-interface SlideData {
-	index: number;
-	shapes: ShapeData[];
-	imageDataUrls: string[];
+interface DragState {
+	shapeKey: string;
+	mode: DragMode;
+	startX: number;
+	startY: number;
+	startTranslateX: number;
+	startTranslateY: number;
+	startWidth: number;
+	startHeight: number;
+	handle: ResizeHandle | null;
 }
 
 export class PptxView extends FileView {
@@ -60,6 +46,16 @@ export class PptxView extends FileView {
 	private readonly ZOOM_STEP = 0.2;
 	private readonly ZOOM_MIN = 0.3;
 	private readonly ZOOM_MAX = 2.0;
+
+	// Editing state
+	private editMode = true;
+	private selectedShapeKey: string | null = null;
+	private shapeEdits = new Map<string, ShapeEditState>();
+	private shapeFormats = new Map<string, ShapeFormatState>();
+	private shapeTextOverrides = new Map<string, string>();
+	private activeDrag: DragState | null = null;
+	private fillSelectEl: HTMLSelectElement | null = null;
+	private strokeSelectEl: HTMLSelectElement | null = null;
 
 	// DOM refs
 	private wrapper: HTMLElement | null = null;
@@ -84,6 +80,7 @@ export class PptxView extends FileView {
 		this.currentFile = file;
 		this.activeSlide = 0;
 		this.slides = [];
+		await this.loadDraftEdits(file);
 		await this.renderFile(file);
 	}
 
@@ -98,6 +95,13 @@ export class PptxView extends FileView {
 		this.zoomLevel = 1.0;
 		this.stripVisible = true;
 		this.isFullscreen = false;
+		this.selectedShapeKey = null;
+		this.activeDrag = null;
+		this.fillSelectEl = null;
+		this.strokeSelectEl = null;
+		this.shapeEdits.clear();
+		this.shapeFormats.clear();
+		this.shapeTextOverrides.clear();
 	}
 
 	private async renderFile(file: TFile): Promise<void> {
@@ -126,7 +130,7 @@ export class PptxView extends FileView {
 		try {
 			const JSZip = ((await import('jszip')) as unknown as { default: JSZipConstructor }).default;
 			const zip = await JSZip.loadAsync(data);
-			this.slides = await this.parseSlides(zip);
+			this.slides = await parseSlidesFromZip(zip);
 		} catch (err) {
 			loading.remove();
 			this.contentEl.createEl('p', {
@@ -228,6 +232,76 @@ export class PptxView extends FileView {
 			fullscreenBtn.classList.toggle('is-active', this.isFullscreen);
 		});
 
+			toolbar.createEl('div', { cls: 'via-toolbar-sep' });
+
+			const editToggleBtn = toolbar.createEl('div', { cls: 'clickable-icon' });
+			setIcon(editToggleBtn, 'mouse-pointer-2');
+			setTooltip(editToggleBtn, this.editMode ? 'Disable shape edit mode' : 'Enable shape edit mode');
+			editToggleBtn.classList.toggle('is-active', this.editMode);
+			editToggleBtn.addEventListener('click', () => {
+				this.editMode = !this.editMode;
+				if (!this.editMode) {
+					this.selectedShapeKey = null;
+					this.activeDrag = null;
+				}
+				editToggleBtn.classList.toggle('is-active', this.editMode);
+				setTooltip(editToggleBtn, this.editMode ? 'Disable shape edit mode' : 'Enable shape edit mode');
+				this.renderSlide();
+				this.updateFormatControls();
+			});
+
+			toolbar.createEl('div', { cls: 'via-toolbar-sep' });
+
+			const fillWrap = toolbar.createEl('div', { cls: 'via-pptx-format-control' });
+			fillWrap.createEl('span', { cls: 'via-pptx-format-label', text: 'Fill' });
+			this.fillSelectEl = fillWrap.createEl('select', { cls: 'via-pptx-format-select' });
+			this.fillSelectEl.createEl('option', { value: '', text: 'From file' });
+			this.fillSelectEl.createEl('option', { value: 'accent', text: 'Accent' });
+			this.fillSelectEl.createEl('option', { value: 'muted', text: 'Muted' });
+			this.fillSelectEl.createEl('option', { value: 'none', text: 'None' });
+			this.fillSelectEl.addEventListener('change', () => this.applySelectedShapeFormatting());
+
+			const strokeWrap = toolbar.createEl('div', { cls: 'via-pptx-format-control' });
+			strokeWrap.createEl('span', { cls: 'via-pptx-format-label', text: 'Stroke' });
+			this.strokeSelectEl = strokeWrap.createEl('select', { cls: 'via-pptx-format-select' });
+			this.strokeSelectEl.createEl('option', { value: '', text: 'From file' });
+			this.strokeSelectEl.createEl('option', { value: 'accent', text: 'Accent' });
+			this.strokeSelectEl.createEl('option', { value: 'muted', text: 'Muted' });
+			this.strokeSelectEl.createEl('option', { value: 'normal', text: 'Normal' });
+			this.strokeSelectEl.createEl('option', { value: 'none', text: 'None' });
+			this.strokeSelectEl.addEventListener('change', () => this.applySelectedShapeFormatting());
+
+			const boldBtn = toolbar.createEl('div', { cls: 'clickable-icon' });
+			boldBtn.setText('B');
+			setTooltip(boldBtn, 'Bold selected text');
+			boldBtn.addEventListener('click', () => document.execCommand('bold'));
+
+			const italicBtn = toolbar.createEl('div', { cls: 'clickable-icon' });
+			italicBtn.setText('I');
+			setTooltip(italicBtn, 'Italic selected text');
+			italicBtn.addEventListener('click', () => document.execCommand('italic'));
+
+			const underlineBtn = toolbar.createEl('div', { cls: 'clickable-icon' });
+			underlineBtn.setText('U');
+			setTooltip(underlineBtn, 'Underline selected text');
+			underlineBtn.addEventListener('click', () => document.execCommand('underline'));
+
+			const saveDraftBtn = toolbar.createEl('div', { cls: 'clickable-icon' });
+			setIcon(saveDraftBtn, 'save');
+			setTooltip(saveDraftBtn, 'Save draft edits');
+			saveDraftBtn.addEventListener('click', async () => {
+				if (!this.currentFile) return;
+				await this.saveDraftEdits(this.currentFile);
+			});
+
+			const applyBtn = toolbar.createEl('div', { cls: 'clickable-icon' });
+			setIcon(applyBtn, 'file-check');
+			setTooltip(applyBtn, 'Apply draft edits to PPTX');
+			applyBtn.addEventListener('click', async () => {
+				if (!this.currentFile) return;
+				await this.applyDraftEditsToPptx(this.currentFile);
+			});
+
 		toolbar.createEl('div', { cls: 'via-toolbar-sep' });
 
 		// Zoom out
@@ -268,6 +342,9 @@ export class PptxView extends FileView {
 		const scrollEl = body.createEl('div', { cls: 'via-pptx-scroll' });
 		this.slideContainer = scrollEl.createEl('div', { cls: 'via-pptx-slide' });
 		this.renderSlide();
+
+		this.registerDomEvent(window, 'pointermove', (e: PointerEvent) => this.onPointerMove(e));
+		this.registerDomEvent(window, 'pointerup', () => this.onPointerUp());
 
 		// Keyboard navigation
 		this.registerDomEvent(this.contentEl, 'keydown', (e: KeyboardEvent) => {
@@ -379,7 +456,41 @@ export class PptxView extends FileView {
 			const hasContent = shape.paragraphs.some(p => p.runs.some(r => r.text.trim()));
 			if (!hasContent) continue;
 
+			const shapeKey = this.makeShapeKey(slide.index, shape.id);
 			const shapeEl = this.slideContainer.createEl('div', { cls: `via-pptx-shape via-pptx-shape--${shape.type}` });
+			if (this.editMode) shapeEl.classList.add('via-pptx-shape--editable');
+			shapeEl.setAttribute('data-shape-id', shape.id);
+			shapeEl.setAttribute('data-shape-key', shapeKey);
+			shapeEl.setAttribute('data-z-index', String(shape.zIndex));
+			if (shape.bounds) {
+				shapeEl.setAttribute('data-x-emu', String(shape.bounds.xEmu));
+				shapeEl.setAttribute('data-y-emu', String(shape.bounds.yEmu));
+				shapeEl.setAttribute('data-width-emu', String(shape.bounds.widthEmu));
+				shapeEl.setAttribute('data-height-emu', String(shape.bounds.heightEmu));
+				shapeEl.setAttribute('data-rotation-deg', String(shape.bounds.rotationDeg));
+			}
+			if (shape.style.fillToken) shapeEl.setAttribute('data-fill-token', shape.style.fillToken);
+			if (shape.style.lineToken) shapeEl.setAttribute('data-line-token', shape.style.lineToken);
+			if (shape.style.lineDash) shapeEl.setAttribute('data-line-dash', shape.style.lineDash);
+			if (shape.style.lineWidth !== null) shapeEl.setAttribute('data-line-width', String(shape.style.lineWidth));
+
+			this.applyShapeEditStyle(shapeEl, shapeKey);
+			this.applyShapeFormatStyle(shapeEl, shapeKey, shape.style.fillToken, shape.style.lineToken);
+			shapeEl.classList.toggle('is-selected', this.selectedShapeKey === shapeKey);
+			shapeEl.contentEditable = this.editMode && this.selectedShapeKey === shapeKey ? 'true' : 'false';
+
+			shapeEl.addEventListener('input', () => this.captureShapeText(shapeEl, shapeKey));
+
+			if (this.editMode) {
+				shapeEl.addEventListener('pointerdown', (event: PointerEvent) => this.onShapePointerDown(event, shapeKey));
+			}
+
+			const textOverride = this.shapeTextOverrides.get(shapeKey);
+			if (textOverride !== undefined) {
+				this.renderTextOverride(shapeEl, textOverride);
+				if (this.editMode) this.ensureResizeHandles(shapeEl);
+				continue;
+			}
 
 			// Check if the entire shape is a bullet list
 			const isList = shape.paragraphs.length > 1 && shape.paragraphs.some(p => p.isBullet);
@@ -414,6 +525,8 @@ export class PptxView extends FileView {
 					this.renderRuns(p, para.runs);
 				}
 			}
+
+			if (this.editMode) this.ensureResizeHandles(shapeEl);
 		}
 
 		if (slide.shapes.length === 0 && slide.imageDataUrls.length === 0) {
@@ -421,6 +534,339 @@ export class PptxView extends FileView {
 				cls: 'via-pptx-slide-empty',
 				text: '(empty slide)',
 			});
+		}
+	}
+
+	private makeShapeKey(slideIndex: number, shapeId: string): string {
+		return `${slideIndex}:${shapeId}`;
+	}
+
+	private getShapeEditState(shapeKey: string): ShapeEditState {
+		const existing = this.shapeEdits.get(shapeKey);
+		if (existing) return existing;
+		const initial: ShapeEditState = {
+			translateX: 0,
+			translateY: 0,
+			widthPx: null,
+			heightPx: null,
+		};
+		this.shapeEdits.set(shapeKey, initial);
+		return initial;
+	}
+
+	private applyShapeEditStyle(shapeEl: HTMLElement, shapeKey: string): void {
+		const state = this.getShapeEditState(shapeKey);
+		shapeEl.style.transform = `translate(${state.translateX}px, ${state.translateY}px)`;
+		if (state.widthPx !== null) {
+			shapeEl.style.width = `${Math.max(48, state.widthPx)}px`;
+		} else {
+			shapeEl.style.removeProperty('width');
+		}
+		if (state.heightPx !== null) {
+			shapeEl.style.minHeight = `${Math.max(24, state.heightPx)}px`;
+		} else {
+			shapeEl.style.removeProperty('min-height');
+		}
+	}
+
+	private ensureResizeHandles(shapeEl: HTMLElement): void {
+		const handles: ResizeHandle[] = ['nw', 'ne', 'sw', 'se'];
+		for (const handle of handles) {
+			const handleEl = shapeEl.createEl('div', { cls: `via-pptx-shape-handle via-pptx-shape-handle--${handle}` });
+			handleEl.setAttribute('data-resize-handle', handle);
+			handleEl.addEventListener('pointerdown', (event: PointerEvent) => {
+				event.preventDefault();
+				event.stopPropagation();
+				const shapeKey = shapeEl.getAttribute('data-shape-key');
+				if (!shapeKey) return;
+				this.beginResize(shapeEl, shapeKey, handle, event);
+			});
+		}
+	}
+
+	private onShapePointerDown(event: PointerEvent, shapeKey: string): void {
+		if (!this.editMode) return;
+		const target = event.target;
+		if (!(target instanceof HTMLElement)) return;
+		if (target.hasAttribute('data-resize-handle')) return;
+
+		const shapeEl = target.closest('[data-shape-key]');
+		if (!(shapeEl instanceof HTMLElement)) return;
+
+		this.selectedShapeKey = shapeKey;
+		this.updateSelectionClasses();
+		this.updateFormatControls();
+
+		if (event.detail > 1) {
+			shapeEl.contentEditable = 'true';
+			shapeEl.focus();
+			return;
+		}
+
+		event.preventDefault();
+		const state = this.getShapeEditState(shapeKey);
+		this.activeDrag = {
+			shapeKey,
+			mode: 'move',
+			startX: event.clientX,
+			startY: event.clientY,
+			startTranslateX: state.translateX,
+			startTranslateY: state.translateY,
+			startWidth: shapeEl.getBoundingClientRect().width,
+			startHeight: shapeEl.getBoundingClientRect().height,
+			handle: null,
+		};
+	}
+
+	private beginResize(shapeEl: HTMLElement, shapeKey: string, handle: ResizeHandle, event: PointerEvent): void {
+		if (!this.editMode) return;
+		this.selectedShapeKey = shapeKey;
+		this.updateSelectionClasses();
+		this.updateFormatControls();
+
+		const state = this.getShapeEditState(shapeKey);
+		const rect = shapeEl.getBoundingClientRect();
+		this.activeDrag = {
+			shapeKey,
+			mode: 'resize',
+			startX: event.clientX,
+			startY: event.clientY,
+			startTranslateX: state.translateX,
+			startTranslateY: state.translateY,
+			startWidth: rect.width,
+			startHeight: rect.height,
+			handle,
+		};
+	}
+
+	private onPointerMove(event: PointerEvent): void {
+		if (!this.activeDrag) return;
+		const state = this.shapeEdits.get(this.activeDrag.shapeKey);
+		if (!state) return;
+
+		const dx = event.clientX - this.activeDrag.startX;
+		const dy = event.clientY - this.activeDrag.startY;
+
+		if (this.activeDrag.mode === 'move') {
+			state.translateX = this.activeDrag.startTranslateX + dx;
+			state.translateY = this.activeDrag.startTranslateY + dy;
+		}
+
+		if (this.activeDrag.mode === 'resize' && this.activeDrag.handle) {
+			const horizontalSign = this.activeDrag.handle.endsWith('w') ? -1 : 1;
+			const verticalSign = this.activeDrag.handle.startsWith('n') ? -1 : 1;
+
+			const widthPx = Math.max(48, this.activeDrag.startWidth + dx * horizontalSign);
+			const heightPx = Math.max(24, this.activeDrag.startHeight + dy * verticalSign);
+			state.widthPx = widthPx;
+			state.heightPx = heightPx;
+		}
+
+		this.applyActiveShapeState();
+	}
+
+	private onPointerUp(): void {
+		if (!this.activeDrag) return;
+		this.activeDrag = null;
+	}
+
+	private applyActiveShapeState(): void {
+		if (!this.activeDrag) return;
+		const shapeEl = this.slideContainer?.querySelector(`[data-shape-key="${this.activeDrag.shapeKey}"]`);
+		if (!(shapeEl instanceof HTMLElement)) return;
+		this.applyShapeEditStyle(shapeEl, this.activeDrag.shapeKey);
+	}
+
+	private applyShapeFormatStyle(
+		shapeEl: HTMLElement,
+		shapeKey: string,
+		defaultFillToken: string | null,
+		defaultLineToken: string | null
+	): void {
+		const override = this.shapeFormats.get(shapeKey);
+		const fillToken = override?.fillToken ?? defaultFillToken;
+		const lineToken = override?.lineToken ?? defaultLineToken;
+
+		if (fillToken === 'accent') {
+			shapeEl.setAttribute('data-fill-style', 'accent');
+		} else if (fillToken === 'muted') {
+			shapeEl.setAttribute('data-fill-style', 'muted');
+		} else if (fillToken === 'none') {
+			shapeEl.setAttribute('data-fill-style', 'none');
+		} else {
+			shapeEl.removeAttribute('data-fill-style');
+		}
+
+		if (lineToken === 'accent') {
+			shapeEl.setAttribute('data-stroke-style', 'accent');
+		} else if (lineToken === 'muted') {
+			shapeEl.setAttribute('data-stroke-style', 'muted');
+		} else if (lineToken === 'normal') {
+			shapeEl.setAttribute('data-stroke-style', 'normal');
+		} else if (lineToken === 'none') {
+			shapeEl.setAttribute('data-stroke-style', 'none');
+		} else {
+			shapeEl.removeAttribute('data-stroke-style');
+		}
+	}
+
+	private applySelectedShapeFormatting(): void {
+		if (!this.selectedShapeKey) return;
+		const fillToken = this.fillSelectEl?.value ?? '';
+		const lineToken = this.strokeSelectEl?.value ?? '';
+
+		this.shapeFormats.set(this.selectedShapeKey, {
+			fillToken: fillToken === '' ? null : fillToken,
+			lineToken: lineToken === '' ? null : lineToken,
+		});
+
+		const shapeEl = this.slideContainer?.querySelector(`[data-shape-key="${this.selectedShapeKey}"]`);
+		if (!(shapeEl instanceof HTMLElement)) return;
+		this.applyShapeFormatStyle(shapeEl, this.selectedShapeKey, null, null);
+	}
+
+	private updateFormatControls(): void {
+		if (!this.fillSelectEl || !this.strokeSelectEl) return;
+		if (!this.selectedShapeKey) {
+			this.fillSelectEl.value = '';
+			this.strokeSelectEl.value = '';
+			return;
+		}
+		const state = this.shapeFormats.get(this.selectedShapeKey);
+		this.fillSelectEl.value = state?.fillToken ?? '';
+		this.strokeSelectEl.value = state?.lineToken ?? '';
+	}
+
+	private captureShapeText(shapeEl: HTMLElement, shapeKey: string): void {
+		const textContent = shapeEl.innerText.replace(/\r/g, '');
+		this.shapeTextOverrides.set(shapeKey, textContent);
+	}
+
+	private renderTextOverride(shapeEl: HTMLElement, text: string): void {
+		shapeEl.empty();
+		const lines = text.split('\n');
+		for (const line of lines) {
+			if (line.trim().length === 0) {
+				shapeEl.createEl('p', { text: ' ' });
+				continue;
+			}
+			shapeEl.createEl('p', { text: line });
+		}
+	}
+
+	private async loadDraftEdits(file: TFile): Promise<void> {
+		const data = await loadPptxEdits(this.app, file);
+		this.shapeEdits.clear();
+		this.shapeFormats.clear();
+
+		const entries = Object.entries(data.shapes);
+		for (const [shapeKey, entry] of entries) {
+			this.shapeEdits.set(shapeKey, {
+				translateX: entry.translateX,
+				translateY: entry.translateY,
+				widthPx: entry.widthPx,
+				heightPx: entry.heightPx,
+			});
+			this.shapeFormats.set(shapeKey, {
+				fillToken: entry.fillToken,
+				lineToken: entry.lineToken,
+			});
+			if (entry.textContent !== null) {
+				this.shapeTextOverrides.set(shapeKey, entry.textContent);
+			}
+		}
+	}
+
+	private async saveDraftEdits(file: TFile): Promise<void> {
+		await savePptxEdits(this.app, file, this.collectDraftPayload());
+		new Notice('PPTX draft edits saved');
+	}
+
+	private async applyDraftEditsToPptx(file: TFile): Promise<void> {
+		const draft = this.collectDraftPayload();
+		if (Object.keys(draft.shapes).length === 0) {
+			new Notice('No draft edits to apply');
+			return;
+		}
+
+		const source = await this.app.vault.adapter.readBinary(file.path);
+		const JSZip = ((await import('jszip')) as unknown as { default: JSZipConstructor }).default;
+		const zip = await JSZip.loadAsync(source);
+		const changedSlides = await applyEditsToPptxZip(zip, draft);
+		if (changedSlides === 0) {
+			new Notice('No matching shapes found in PPTX for current draft edits');
+			return;
+		}
+
+		const updated = await zip.generateAsync({ type: 'arraybuffer' });
+		await this.app.vault.modifyBinary(file, updated);
+
+		this.shapeEdits.clear();
+		this.shapeFormats.clear();
+		this.selectedShapeKey = null;
+		this.activeDrag = null;
+		await savePptxEdits(this.app, file, { version: 1, shapes: {} });
+
+		await this.renderFile(file);
+		new Notice(`Applied edits to ${changedSlides} slide${changedSlides === 1 ? '' : 's'}`);
+	}
+
+	private collectDraftPayload(): {
+		version: 1;
+		shapes: Record<string, {
+			translateX: number;
+			translateY: number;
+			widthPx: number | null;
+			heightPx: number | null;
+			fillToken: string | null;
+			lineToken: string | null;
+			textContent: string | null;
+		}>;
+	} {
+		const shapes: Record<string, {
+			translateX: number;
+			translateY: number;
+			widthPx: number | null;
+			heightPx: number | null;
+			fillToken: string | null;
+			lineToken: string | null;
+			textContent: string | null;
+		}> = {};
+		const allShapeKeys = new Set<string>();
+		for (const shapeKey of this.shapeEdits.keys()) allShapeKeys.add(shapeKey);
+		for (const shapeKey of this.shapeFormats.keys()) allShapeKeys.add(shapeKey);
+		for (const shapeKey of this.shapeTextOverrides.keys()) allShapeKeys.add(shapeKey);
+
+		for (const shapeKey of allShapeKeys) {
+			const state = this.shapeEdits.get(shapeKey) ?? {
+				translateX: 0,
+				translateY: 0,
+				widthPx: null,
+				heightPx: null,
+			};
+			const format = this.shapeFormats.get(shapeKey);
+			shapes[shapeKey] = {
+				translateX: state.translateX,
+				translateY: state.translateY,
+				widthPx: state.widthPx,
+				heightPx: state.heightPx,
+				fillToken: format?.fillToken ?? null,
+				lineToken: format?.lineToken ?? null,
+				textContent: this.shapeTextOverrides.get(shapeKey) ?? null,
+			};
+		}
+
+		return { version: 1, shapes };
+	}
+
+	private updateSelectionClasses(): void {
+		const shapes = this.slideContainer?.querySelectorAll('.via-pptx-shape--editable');
+		if (!shapes) return;
+		for (let i = 0; i < shapes.length; i++) {
+			const shape = shapes[i];
+			if (!(shape instanceof HTMLElement)) continue;
+			const key = shape.getAttribute('data-shape-key');
+			shape.classList.toggle('is-selected', key !== null && key === this.selectedShapeKey);
 		}
 	}
 
@@ -439,231 +885,5 @@ export class PptxView extends FileView {
 				container.appendText(run.text);
 			}
 		}
-	}
-
-	// ── PPTX Parsing ──────────────────────────────────────────────────────
-
-	private async parseSlides(zip: JSZipInstance): Promise<SlideData[]> {
-		// Discover slide files (ppt/slides/slide1.xml, slide2.xml, ...)
-		const slideFiles = zip.file(/^ppt\/slides\/slide\d+\.xml$/)
-			.map(f => f.name)
-			.sort((a, b) => {
-				const numA = parseInt(a.match(/slide(\d+)/)?.[1] ?? '0', 10);
-				const numB = parseInt(b.match(/slide(\d+)/)?.[1] ?? '0', 10);
-				return numA - numB;
-			});
-
-		const slides: SlideData[] = [];
-
-		for (let i = 0; i < slideFiles.length; i++) {
-			const slideFile = slideFiles[i];
-			if (!slideFile) continue;
-			const slideXml = await this.readZipFile(zip, slideFile);
-			if (!slideXml) {
-				slides.push({ index: i + 1, shapes: [], imageDataUrls: [] });
-				continue;
-			}
-
-			const shapes = this.extractShapes(slideXml);
-			const imageDataUrls = await this.extractImages(zip, slideFile);
-
-			slides.push({ index: i + 1, shapes, imageDataUrls });
-		}
-
-		return slides;
-	}
-
-	private async readZipFile(zip: JSZipInstance, path: string): Promise<string | null> {
-		const entry = zip.file(path);
-		if (!entry) return null;
-		return entry.async('string');
-	}
-
-	/** Extract shapes with full text structure from slide XML. */
-	private extractShapes(xml: string): ShapeData[] {
-		const parser = new DOMParser();
-		const doc = parser.parseFromString(xml, 'application/xml');
-
-		const shapes: ShapeData[] = [];
-		const spElements = doc.getElementsByTagName('p:sp');
-
-		for (let s = 0; s < spElements.length; s++) {
-			const sp = spElements[s];
-			if (!sp) continue;
-
-			// Detect shape type from placeholder attribute
-			const shapeType = this.detectShapeType(sp);
-
-			// Get text body
-			const txBody = sp.getElementsByTagName('p:txBody');
-			if (txBody.length === 0) continue;
-			const body = txBody[0];
-			if (!body) continue;
-
-			// Extract paragraphs
-			const paragraphs: ParagraphData[] = [];
-			const pElements = body.getElementsByTagName('a:p');
-
-			for (let p = 0; p < pElements.length; p++) {
-				const pEl = pElements[p];
-				if (!pEl) continue;
-
-				// Only process direct <a:p> children of this txBody (not nested)
-				if (pEl.parentNode !== body) continue;
-
-				const isBullet = this.detectBullet(pEl);
-				const runs = this.extractRuns(pEl);
-
-				paragraphs.push({ runs, isBullet });
-			}
-
-			if (paragraphs.length > 0) {
-				shapes.push({ type: shapeType, paragraphs });
-			}
-		}
-
-		return shapes;
-	}
-
-	/** Detect shape type from <p:ph> placeholder attributes. */
-	private detectShapeType(sp: Element): ShapeData['type'] {
-		const phElements = sp.getElementsByTagName('p:ph');
-		if (phElements.length === 0) return 'other';
-		const ph = phElements[0];
-		if (!ph) return 'other';
-		const type = ph.getAttribute('type') ?? '';
-		if (type === 'title') return 'title';
-		if (type === 'ctrTitle') return 'ctrTitle';
-		if (type === 'subTitle') return 'subTitle';
-		if (type === 'body') return 'body';
-		return 'other';
-	}
-
-	/** Detect if a paragraph has bullet markers. */
-	private detectBullet(pEl: Element): boolean {
-		const pPr = pEl.getElementsByTagName('a:pPr');
-		if (pPr.length === 0) return false;
-		const props = pPr[0];
-		if (!props) return false;
-
-		// Has explicit bullet characters or auto-numbered bullets
-		if (props.getElementsByTagName('a:buChar').length > 0) return true;
-		if (props.getElementsByTagName('a:buAutoNum').length > 0) return true;
-		// Has indent level but no explicit "no bullet" — treat as bullet
-		const lvl = props.getAttribute('lvl');
-		if (lvl && parseInt(lvl, 10) > 0 && props.getElementsByTagName('a:buNone').length === 0) return true;
-
-		return false;
-	}
-
-	/** Extract runs with formatting from a paragraph element. */
-	private extractRuns(pEl: Element): RunData[] {
-		const runs: RunData[] = [];
-
-		for (let i = 0; i < pEl.childNodes.length; i++) {
-			const child = pEl.childNodes[i];
-			if (!child) continue;
-
-			// <a:r> run elements
-			if (child.nodeName === 'a:r') {
-				const rEl = child as Element;
-				let bold = false;
-				let italic = false;
-
-				// Check <a:rPr> for formatting
-				const rPr = rEl.getElementsByTagName('a:rPr');
-				if (rPr.length > 0 && rPr[0]) {
-					bold = rPr[0].getAttribute('b') === '1';
-					italic = rPr[0].getAttribute('i') === '1';
-				}
-
-				// Get text from <a:t>
-				const tEls = rEl.getElementsByTagName('a:t');
-				for (let t = 0; t < tEls.length; t++) {
-					const tEl = tEls[t];
-					if (!tEl) continue;
-					const text = tEl.textContent ?? '';
-					if (text) runs.push({ text, bold, italic });
-				}
-			}
-
-			// <a:fld> field elements (slide numbers, dates, etc.)
-			if (child.nodeName === 'a:fld') {
-				const fEl = child as Element;
-				const tEls = fEl.getElementsByTagName('a:t');
-				for (let t = 0; t < tEls.length; t++) {
-					const tEl = tEls[t];
-					if (!tEl) continue;
-					const text = tEl.textContent ?? '';
-					if (text) runs.push({ text, bold: false, italic: false });
-				}
-			}
-		}
-
-		return runs;
-	}
-
-	/** Extract images referenced in a slide's relationship file. */
-	private async extractImages(zip: JSZipInstance, slidePath: string): Promise<string[]> {
-		// slidePath: "ppt/slides/slide1.xml"
-		// Rels file: "ppt/slides/_rels/slide1.xml.rels"
-		const slideFilename = slidePath.split('/').pop() ?? '';
-		const relsPath = `ppt/slides/_rels/${slideFilename}.rels`;
-
-		const relsXml = await this.readZipFile(zip, relsPath);
-		if (!relsXml) return [];
-
-		const parser = new DOMParser();
-		const doc = parser.parseFromString(relsXml, 'application/xml');
-		const rels = doc.getElementsByTagName('Relationship');
-
-		const dataUrls: string[] = [];
-
-		for (let i = 0; i < rels.length; i++) {
-			const rel = rels[i];
-			if (!rel) continue;
-			const type = rel.getAttribute('Type') ?? '';
-			const target = rel.getAttribute('Target') ?? '';
-
-			// Image relationship type
-			if (!type.includes('/image')) continue;
-
-			// Resolve path relative to ppt/slides/
-			const imagePath = this.resolvePath('ppt/slides/', target);
-			const imageEntry = zip.file(imagePath);
-			if (!imageEntry) continue;
-
-			try {
-				const imgData = await imageEntry.async('base64');
-				const ext = imagePath.split('.').pop()?.toLowerCase() ?? 'png';
-				const mime = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
-					: ext === 'png' ? 'image/png'
-					: ext === 'gif' ? 'image/gif'
-					: ext === 'svg' ? 'image/svg+xml'
-					: ext === 'webp' ? 'image/webp'
-					: 'image/png';
-				dataUrls.push(`data:${mime};base64,${imgData}`);
-			} catch {
-				// Skip unreadable images
-			}
-		}
-
-		return dataUrls;
-	}
-
-	/** Resolve a relative path (with ../) against a base directory. */
-	private resolvePath(base: string, relative: string): string {
-		const baseParts = base.replace(/\/$/, '').split('/');
-		const relParts = relative.split('/');
-
-		for (const part of relParts) {
-			if (part === '..') {
-				baseParts.pop();
-			} else if (part !== '.') {
-				baseParts.push(part);
-			}
-		}
-
-		return baseParts.join('/');
 	}
 }
