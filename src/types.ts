@@ -5,6 +5,7 @@ export interface AnnotationPath {
 	tool: 'pen' | 'highlighter' | 'eraser';
 	color: string;
 	width: number;
+	opacity?: number;
 	points: { x: number; y: number }[];
 }
 

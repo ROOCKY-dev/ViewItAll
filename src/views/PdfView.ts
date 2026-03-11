@@ -281,7 +281,17 @@ export class PdfView extends FileView {
 		customInput.type = 'color';
 		customInput.className = 'via-color-custom-input';
 		this.colorCustomInputEl = customInput;
-		customInput.addEventListener('input', () => this.applyColor(customInput.value));
+		customInput.addEventListener('input', () => {
+			// Live preview: update swatch active ring without persisting
+			const tool = this.currentTool;
+			if (tool !== 'pen' && tool !== 'highlighter') return;
+			const presets = tool === 'pen' ? this.PEN_PRESETS : this.HIGHLIGHT_PRESETS;
+			const color   = customInput.value.toLowerCase();
+			for (const s of this.colorSwatchEls) s.classList.toggle('via-color-swatch-active', s.dataset.color?.toLowerCase() === color);
+			const isCustom = !presets.some(c => c.toLowerCase() === color);
+			customInput.parentElement?.classList.toggle('via-color-swatch-active', isCustom);
+		});
+		customInput.addEventListener('change', () => this.applyColor(customInput.value));
 
 		this.colorSepEl = bar.createEl('div', { cls: 'via-toolbar-sep' });
 

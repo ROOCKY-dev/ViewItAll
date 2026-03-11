@@ -95,10 +95,55 @@ npm run build
 
 ## Versioning & releases
 
-- Bump `version` in `manifest.json` (SemVer) and update `versions.json` to map plugin version → minimum app version.
-- Create a GitHub release whose tag exactly matches `manifest.json`'s `version`. Do not use a leading `v`.
-- Attach `manifest.json`, `main.js`, and `styles.css` (if present) to the release as individual assets.
-- After the initial release, follow the process to add/update your plugin in the community catalog as required.
+### Semver rules
+
+| Commit type | Bump | Example | Command |
+|---|---|---|---|
+| `fix`, `perf`, `chore`, `docs`, `style`, `refactor` | **patch** `1.0.x` | `1.0.0 → 1.0.1` | `npm run release:patch` |
+| `feat` (new user-visible feature) | **minor** `1.x.0` | `1.0.x → 1.1.0` | `npm run release:minor` |
+| Breaking API / plugin behaviour change | **major** `x.0.0` | `1.x.x → 2.0.0` | `npm run release:major` |
+
+### How to release a new version
+
+1. **Build & verify** — ensure the plugin builds cleanly and is manually tested in Obsidian:
+   ```bash
+   npm run build
+   ```
+
+2. **Run the release script** — this bumps `package.json`, then `version-bump.mjs` syncs `manifest.json` and `versions.json`, stages all three files, and creates a git commit + annotated tag:
+   ```bash
+   npm run release:patch   # fix / perf / chore → 1.0.x
+   npm run release:minor   # feat              → 1.x.0
+   npm run release:major   # breaking change   → x.0.0
+   ```
+
+3. **Push the commit and the tag**:
+   ```bash
+   git push && git push --tags
+   ```
+
+4. **GitHub Actions publishes a draft release** — the `release.yml` workflow triggers on the tag, builds the plugin, and uploads `main.js`, `manifest.json`, `styles.css` as release assets.
+
+5. **Publish the draft** — go to the GitHub Releases page, review, add release notes, and click **Publish release**.
+
+### Version-only bump (no tag / no push)
+
+Use these scripts when you only want to update the version files locally without creating a tag (e.g., mid-sprint housekeeping):
+
+```bash
+npm run version:patch   # bumps files + git add, no tag, no push
+npm run version:minor
+npm run version:major
+```
+
+### Files managed by the version scripts
+
+| File | What changes |
+|---|---|
+| `package.json` | `version` field |
+| `manifest.json` | `version` field |
+| `versions.json` | Adds `"<new-version>": "<minAppVersion>"` entry |
+
 
 ## Security, privacy, and compliance
 

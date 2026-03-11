@@ -1,47 +1,71 @@
-# ViewItAll-md — TODO
+# ViewItAll — Backlog
 
-## v0.1.0 MVP
+> Agile feature list for **beta 1.0.0**. Tackled one feature at a time, highest priority first.  
+> See `UI-UX_constraints.md` for design standards every feature must meet.
 
-### Completed
-- [x] Scaffolded plugin structure (`src/main.ts`, `src/types.ts`, `src/settings.ts`)
-- [x] Installed npm dependencies: `mammoth`, `html-to-docx`, `pdfjs-dist`
-- [x] Updated `manifest.json` (name, version, isDesktopOnly)
-- [x] Created `src/utils/fileUtils.ts` — file path helpers
-- [x] Created `src/utils/docxUtils.ts` — mammoth read + html-to-docx save
-- [x] Created `src/utils/pdfAnnotations.ts` — load/save companion `.annotations.json`
-- [x] Created `src/views/DocxView.ts` — DOCX viewer/editor with toolbar
-- [x] Created `src/views/PdfView.ts` — PDF viewer with freehand annotation layer
-- [x] Rewrote `src/main.ts` — registers views, extensions, settings tab
-- [x] Rewrote `src/settings.ts` — full settings UI
-- [x] Updated `styles.css` — scoped styles for all components
+---
 
-### Pending / Future
+## ✅ MVP Done (v0.1.x)
 
-#### v0.1.x polish
-- [ ] Zoom in/out for PDF pages (currently fixed 1.5× scale)
-- [ ] Scroll-to-page via keyboard shortcut or page-number input
-- [ ] DOCX: undo/redo via native browser `execCommand` or `document.execCommand`
-- [ ] Show page numbers below each PDF page canvas
-- [ ] Display total pages count in PDF toolbar
+- [x] Plugin scaffold, esbuild config (punycode fix, pdf-worker inline)
+- [x] DOCX viewer + editor (mammoth → contentEditable → html-to-docx)
+- [x] PDF viewer (pdfjs-dist v3, blob-URL worker, flex layout)
+- [x] PDF loading spinner & correct page sizing
+- [x] PDF freehand annotations (pen, highlighter, eraser)
+- [x] Annotation sidecar save (.annotations.json)
+- [x] PDF zoom controls (step buttons, 9 snap levels, normalised annotation coords)
+- [x] Settings tab
+- [x] GitHub repo (ROOCKY-dev/ViewItAll-obsidian)
+- [x] UI/UX constraints doc
 
-#### v0.2.0
-- [ ] PDF text search (using pdfjs-dist `getTextContent`)
-- [ ] PDF table of contents / outline sidebar
-- [ ] Annotation color picker per-stroke (currently uses global settings)
-- [ ] Export annotated PDF (merge canvas annotations into PDF via pdf-lib)
+---
 
-#### Longer term
-- [ ] DOCX: track-changes support
-- [ ] DOCX: print via `window.print()` or Electron dialog
-- [ ] Excel (.xlsx) viewer (read-only, render as HTML table via SheetJS)
-- [ ] PowerPoint (.pptx) viewer (read-only slide thumbnails)
+## 🏃 Sprint 1 — Core UX Polish
+
+| ID | Feature | Notes |
+|----|---------|-------|
+| `pdf-scroll-zoom` | **PDF: Ctrl+scroll zoom** | Smooth zoom centred on pointer; Ctrl+0 reset; Ctrl+=/- keyboard |
+| `pdf-page-numbers` | **PDF: Page numbers + total** | "N / Total" indicator + label below each page canvas |
+| `pdf-page-jump` | **PDF: Jump-to-page** | Click indicator → inline input → scrollIntoView *(needs page-numbers first)* |
+| `pdf-keyboard-tools` | **PDF: Tool keyboard shortcuts** | V P H E keys; show hints in button titles |
+| `pdf-color-picker` | **PDF: Per-stroke colour picker** | ✅ 6 swatches + custom slot; persist per tool type |
+
+---
+
+## 🏃 Sprint 2 — Tools Quality
+
+| ID | Feature | Notes |
+|----|---------|-------|
+| `pdf-width-slider` | **PDF: Width & opacity sliders** | Inline expanding slider; persist per tool |
+| `pdf-text-search` | **PDF: Full-text search** | Ctrl+F; pdfjs getTextContent; highlight + prev/next |
+| `docx-undo-redo` | **DOCX: Undo/redo** | execCommand undo/redo; toolbar buttons; dirty-state asterisk |
+| `toolbar-position` | **Both: Configurable toolbar position** | top/bottom/left/right/floating; per file-type setting |
+
+---
+
+## 🏃 Sprint 3 — Advanced Features
+
+| ID | Feature | Notes |
+|----|---------|-------|
+| `pdf-toc` | **PDF: TOC / outline sidebar** | pdfjs getOutline(); collapsible panel; click to scroll |
+| `pdf-export` | **PDF: Export with embedded annotations** | pdf-lib vector draw; export as .annotated.pdf |
+| `pdf-snap` | **PDF: Shape snap** | Near-rect/circle/line detection; snap grid overlay (§3.6 constraints) |
+| `pdf-text-note` | **PDF: Text note anchored to page** | Click-to-place text box; normalised coords |
+
+---
+
+## 🔭 Post-1.0.0 (Future)
+
+| ID | Feature |
+|----|---------|
+| `xlsx-viewer` | Excel viewer (SheetJS, read-only, sheet tabs) |
+| `pptx-viewer` | PowerPoint viewer (slide strip + main view) |
+
+---
 
 ## Known Limitations
 
-- **DOCX round-trip is lossy**: Complex formatting (merged table cells, embedded objects,
-  custom styles) may be simplified when saving. A warning is shown before saving.
-- **PDF annotation is additive only**: Annotations are stored in a sidecar
-  `{filename}.pdf.annotations.json` file and drawn as canvas overlays. They are NOT
-  embedded into the PDF file itself.
-- **Desktop only**: The plugin is marked `isDesktopOnly: true`. Binary file I/O and
-  pdfjs-dist canvas rendering require the Electron renderer environment.
+- **DOCX round-trip is lossy** — custom styles, macros, tracked changes not preserved on save.
+- **PDF annotations are sidecar-only** — not embedded in the PDF file (use `pdf-export` feature for that).
+- **Desktop only** (`isDesktopOnly: true`) — requires Electron renderer.
+- **Annotation coords pre-0.1.4** — absolute px coords (old sidecar files will render incorrectly at new zoom levels).

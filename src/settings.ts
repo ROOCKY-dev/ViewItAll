@@ -13,6 +13,8 @@ export interface PluginSettings {
 	penWidth: number;
 	highlighterColor: string;
 	highlighterWidth: number;
+	highlighterOpacity: number;
+	eraserWidth: number;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -25,6 +27,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	penWidth: 2,
 	highlighterColor: '#ffd43b',
 	highlighterWidth: 16,
+	highlighterOpacity: 0.4,
+	eraserWidth: 20,
 };
 
 export class ViewItAllSettingTab extends PluginSettingTab {
