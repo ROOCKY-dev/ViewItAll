@@ -68,10 +68,19 @@ export class PdfView extends FileView {
 	onload(): void {
 		super.onload();
 		this.registerDomEvent(this.containerEl as HTMLElement, 'keydown', (e: KeyboardEvent) => {
-			if (!e.ctrlKey && !e.metaKey) return;
-			if (e.key === '0') { e.preventDefault(); this.setZoom(1.0, this.viewportCenterFrac()); }
-			else if (e.key === '=' || e.key === '+') { e.preventDefault(); this.stepZoom(+1); }
-			else if (e.key === '-') { e.preventDefault(); this.stepZoom(-1); }
+			// Ctrl/Cmd zoom shortcuts
+			if (e.ctrlKey || e.metaKey) {
+				if (e.key === '0') { e.preventDefault(); this.setZoom(1.0, this.viewportCenterFrac()); }
+				else if (e.key === '=' || e.key === '+') { e.preventDefault(); this.stepZoom(+1); }
+				else if (e.key === '-') { e.preventDefault(); this.stepZoom(-1); }
+				return;
+			}
+			// Tool shortcuts — guard: don't fire when an input/textarea is focused
+			const target = e.target as HTMLElement;
+			if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+			const toolMap: Record<string, AnnotTool> = { v: 'none', p: 'pen', h: 'highlighter', e: 'eraser' };
+			const tool = toolMap[e.key.toLowerCase()];
+			if (tool !== undefined) { e.preventDefault(); this.setTool(tool); }
 		});
 	}
 
@@ -229,24 +238,19 @@ export class PdfView extends FileView {
 		const bar = document.createElement('div');
 		bar.className = 'via-pdf-toolbar';
 
-		const tools: { id: AnnotTool; label: string }[] = [
-			{ id: 'none', label: '\ud83d\udc41 View' },
-			{ id: 'pen', label: '\u270f\ufe0f Pen' },
-			{ id: 'highlighter', label: '\ud83d\udd8a Highlight' },
-			{ id: 'eraser', label: '\u2b1c Erase' },
+		const tools: { id: AnnotTool; label: string; key: string }[] = [
+			{ id: 'none', label: '\ud83d\udc41 View', key: 'V' },
+			{ id: 'pen', label: '\u270f\ufe0f Pen', key: 'P' },
+			{ id: 'highlighter', label: '\ud83d\udd8a Highlight', key: 'H' },
+			{ id: 'eraser', label: '\u2b1c Erase', key: 'E' },
 		];
 
 		for (const t of tools) {
 			const btn = bar.createEl('button', { cls: 'via-btn', text: t.label });
 			btn.dataset.tool = t.id;
+			btn.title = `${t.label} (${t.key})`;
 			if (t.id === this.currentTool) btn.classList.add('via-btn-active');
-			btn.addEventListener('click', () => {
-				this.currentTool = t.id;
-				bar.querySelectorAll('[data-tool]').forEach(b =>
-					b.classList.toggle('via-btn-active', (b as HTMLElement).dataset.tool === t.id)
-				);
-				this.updateCanvasInteraction();
-			});
+			btn.addEventListener('click', () => this.setTool(t.id));
 		}
 
 		bar.createEl('div', { cls: 'via-toolbar-sep' });
@@ -268,8 +272,9 @@ export class PdfView extends FileView {
 
 		bar.createEl('div', { cls: 'via-toolbar-sep' });
 
-		this.pageIndicatorEl = bar.createEl('span', { cls: 'via-pdf-page-indicator', text: '\u2014 / \u2014' });
-		this.pageIndicatorEl.title = 'Current page / total pages';
+		this.pageIndicatorEl = bar.createEl('button', { cls: 'via-pdf-page-indicator', text: '\u2014 / \u2014' });
+		this.pageIndicatorEl.title = 'Click to jump to page';
+		this.pageIndicatorEl.addEventListener('click', () => this.openPageJumpInput());
 
 		bar.createEl('div', { cls: 'via-toolbar-sep' });
 
@@ -409,6 +414,58 @@ export class PdfView extends FileView {
 			ctx.annotCanvas.style.pointerEvents = drawing ? 'auto' : 'none';
 			ctx.annotCanvas.style.cursor = drawing ? 'crosshair' : 'default';
 		}
+	}
+
+	private setTool(tool: AnnotTool): void {
+		this.currentTool = tool;
+		this.containerEl.querySelectorAll('.via-pdf-toolbar [data-tool]').forEach(b =>
+			b.classList.toggle('via-btn-active', (b as HTMLElement).dataset.tool === tool)
+		);
+		this.updateCanvasInteraction();
+	}
+
+	// Page jump --------------------------------------------------------------
+
+	private openPageJumpInput(): void {
+		if (!this.pdfDoc || !this.pageIndicatorEl) return;
+		const total = this.pdfDoc.numPages;
+		const currentPage = this.getVisiblePageNum();
+		const indicator = this.pageIndicatorEl;
+
+		const input = document.createElement('input');
+		input.type = 'number';
+		input.min = '1';
+		input.max = String(total);
+		input.value = String(currentPage);
+		input.className = 'via-pdf-page-jump-input';
+
+		indicator.parentElement!.insertBefore(input, indicator);
+		indicator.style.display = 'none';
+		input.focus();
+		input.select();
+
+		const cleanup = () => {
+			input.remove();
+			indicator.style.display = '';
+		};
+
+		const commit = () => {
+			const val = parseInt(input.value, 10);
+			if (!isNaN(val)) this.scrollToPage(Math.max(1, Math.min(total, val)));
+			cleanup();
+		};
+
+		input.addEventListener('keydown', (e) => {
+			e.stopPropagation();
+			if (e.key === 'Enter') { e.preventDefault(); commit(); }
+			else if (e.key === 'Escape') { e.preventDefault(); cleanup(); }
+		});
+		input.addEventListener('blur', cleanup);
+	}
+
+	private scrollToPage(pageNum: number): void {
+		const ctx = this.pages.find(p => p.pageNum === pageNum);
+		if (ctx) ctx.container.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 
 	// Drawing ----------------------------------------------------------------

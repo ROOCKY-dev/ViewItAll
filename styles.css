@@ -31,9 +31,37 @@
 	font-size: var(--font-ui-small);
 	font-variant-numeric: tabular-nums;
 	color: var(--text-muted);
-	padding: 0 6px;
+	padding: 3px 8px;
 	white-space: nowrap;
 	user-select: none;
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: var(--radius-m);
+	cursor: pointer;
+	transition: border-color 0.15s, color 0.15s;
+}
+.via-pdf-page-indicator:hover {
+	border-color: var(--background-modifier-border);
+	color: var(--text-normal);
+}
+
+/* Inline page-jump input (replaces indicator on click) */
+.via-pdf-page-jump-input {
+	width: 5ch;
+	padding: 3px 4px;
+	border: 1px solid var(--interactive-accent);
+	border-radius: var(--radius-m);
+	background: var(--background-primary);
+	color: var(--text-normal);
+	font-size: var(--font-ui-small);
+	font-variant-numeric: tabular-nums;
+	text-align: center;
+	-moz-appearance: textfield;
+}
+.via-pdf-page-jump-input::-webkit-inner-spin-button,
+.via-pdf-page-jump-input::-webkit-outer-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
 }
 
 /* ── DOCX viewer ─────────────────────────────────────────────────────── */
