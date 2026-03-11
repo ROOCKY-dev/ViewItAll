@@ -1,5 +1,6 @@
 import type * as pdfjsLib from 'pdfjs-dist';
 import type { TextItem as PdfTextItem } from 'pdfjs-dist/types/src/display/api';
+import { setIcon, setTooltip } from 'obsidian';
 import type { PageCtx, SearchMatch } from './pdfTypes';
 
 /**
@@ -63,8 +64,8 @@ export class PdfSearchController {
 		const bar = this.wrapperEl.createEl('div', { cls: 'via-pdf-search-bar' });
 		this.searchBarEl = bar;
 
-		const icon = bar.createEl('span', { cls: 'via-pdf-search-icon', text: '🔍' });
-		icon.style.flexShrink = '0';
+		const iconEl = bar.createEl('span', { cls: 'via-pdf-search-icon' });
+		setIcon(iconEl, 'search');
 
 		this.searchInputEl = bar.createEl('input');
 		this.searchInputEl.type        = 'text';
@@ -73,16 +74,19 @@ export class PdfSearchController {
 
 		this.searchMatchCountEl = bar.createEl('span', { cls: 'via-pdf-search-count', text: '' });
 
-		const prevBtn = bar.createEl('button', { cls: 'via-btn', text: '↑' });
-		prevBtn.title = 'Previous match (Shift+Enter)';
+		const prevBtn = bar.createEl('div', { cls: 'clickable-icon' });
+		setIcon(prevBtn, 'chevron-up');
+		setTooltip(prevBtn, 'Previous match (Shift+Enter)');
 		prevBtn.addEventListener('click', () => this.goToMatch(this.currentIdx - 1));
 
-		const nextBtn = bar.createEl('button', { cls: 'via-btn', text: '↓' });
-		nextBtn.title = 'Next match (Enter)';
+		const nextBtn = bar.createEl('div', { cls: 'clickable-icon' });
+		setIcon(nextBtn, 'chevron-down');
+		setTooltip(nextBtn, 'Next match (Enter)');
 		nextBtn.addEventListener('click', () => this.goToMatch(this.currentIdx + 1));
 
-		const closeBtn = bar.createEl('button', { cls: 'via-btn', text: '✕' });
-		closeBtn.title = 'Close search (Escape)';
+		const closeBtn = bar.createEl('div', { cls: 'clickable-icon' });
+		setIcon(closeBtn, 'x');
+		setTooltip(closeBtn, 'Close search (Escape)');
 		closeBtn.addEventListener('click', () => this.close());
 
 		this.searchInputEl.addEventListener('keydown', (e) => {

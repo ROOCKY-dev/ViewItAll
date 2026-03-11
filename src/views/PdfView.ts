@@ -1,4 +1,4 @@
-import { FileView, TFile, WorkspaceLeaf, Notice } from 'obsidian';
+import { FileView, TFile, WorkspaceLeaf, Notice, setIcon, setTooltip } from 'obsidian';
 import * as pdfjsLib from 'pdfjs-dist';
 import type { RefProxy as PdfRefProxy } from 'pdfjs-dist/types/src/display/api';
 import { VIEW_TYPE_PDF } from '../types';
@@ -53,23 +53,12 @@ private pageObserver: IntersectionObserver | null = null;
 private renderObserver: IntersectionObserver | null = null;
 private _renderGen = 0;
 
-// Color picker
-private colorSectionEl: HTMLElement | null = null;
-private colorSepEl: HTMLElement | null = null;
-private colorSwatchEls: HTMLButtonElement[] = [];
-private colorCustomInputEl: HTMLInputElement | null = null;
+// Color dot & floating popover
+private colorDotBtnEl: HTMLButtonElement | null = null;
+private colorPopoverEl: HTMLElement | null = null;
 
 private readonly PEN_PRESETS       = ['#e03131', '#1971c2', '#2f9e44', '#212529', '#e8590c', '#7048e8'];
 private readonly HIGHLIGHT_PRESETS = ['#ffd43b', '#22b8cf', '#f783ac', '#69db7c', '#ffa94d', '#da77f2'];
-
-// Width / opacity sliders
-private widthSectionEl: HTMLElement | null = null;
-private widthSepEl: HTMLElement | null = null;
-private widthLabelEl: HTMLElement | null = null;
-private widthSliderEl: HTMLInputElement | null = null;
-private opacityRowEl: HTMLElement | null = null;
-private opacityLabelEl: HTMLElement | null = null;
-private opacitySliderEl: HTMLInputElement | null = null;
 
 // Snapping
 private snapDirection: SnapDirection = 'horizontal';
@@ -167,6 +156,15 @@ const toolMap: Record<string, AnnotTool> = {
 const tool = toolMap[e.key.toLowerCase()];
 if (tool !== undefined) { e.preventDefault(); this.setTool(tool); }
 });
+
+// ── View header actions (top-right of the leaf) ───────────────────────
+const s0 = this.plugin.settings;
+this.addAction('search',      `Search PDF (Ctrl+${s0.keySearch.toUpperCase()})`, () => this.search.open());
+this.addAction('list',        'Table of contents',         () => this.toggleToc());
+this.addAction('file-output', 'Export annotated PDF',      () => {
+	if (this.currentFile && this.pdfDoc)
+		exportAnnotatedPdf(this.app, this.currentFile, this.pdfDoc, this.annotData);
+});
 }
 
 getViewType(): string { return VIEW_TYPE_PDF; }
@@ -185,6 +183,7 @@ await this.renderPdf(file);
 
 async onUnloadFile(_file: TFile): Promise<void> {
 this._renderGen++;
+this.hideColorPopover();
 if (this._zoomDebounceTimer !== null) {
 clearTimeout(this._zoomDebounceTimer); this._zoomDebounceTimer = null;
 }
@@ -194,10 +193,11 @@ if (this.pdfDoc) { this.pdfDoc.destroy(); this.pdfDoc = null; }
 this.pages = [];
 this.search.destroy();
 this.noteEls.clear();
-this.tocSidebarEl = null;
-this.tocVisible   = false;
-this.bodyEl       = null;
-this.snapDirBtnEl = null;
+this.tocSidebarEl  = null;
+this.tocVisible    = false;
+this.bodyEl        = null;
+this.snapDirBtnEl  = null;
+this.colorDotBtnEl = null;
 this.contentEl.empty();
 }
 
@@ -359,105 +359,39 @@ const bar = document.createElement('div');
 bar.className = 'via-pdf-toolbar';
 const s = this.plugin.settings;
 
-// TOC toggle
-const tocBtn = bar.createEl('button', { cls: 'via-btn', text: '📑 TOC' });
-tocBtn.title = 'Toggle table of contents';
-tocBtn.addEventListener('click', () => this.toggleToc());
-
-bar.createEl('div', { cls: 'via-toolbar-sep' });
-
-// Tool buttons — titles show the configured key
-const tools: { id: AnnotTool; label: string; key: string }[] = [
-{ id: 'none',        label: '👁 View',      key: s.keyToolView.toUpperCase() },
-{ id: 'pen',         label: '✏️ Pen',        key: s.keyToolPen.toUpperCase() },
-{ id: 'highlighter', label: '🖊 Highlight',  key: s.keyToolHighlight.toUpperCase() },
-{ id: 'eraser',      label: '⬜ Erase',      key: s.keyToolErase.toUpperCase() },
-{ id: 'note',        label: '📝 Note',       key: s.keyToolNote.toUpperCase() },
+// ── Tool group (pill) ──────────────────────────────────────────────────
+const toolGroup = bar.createEl('div', { cls: 'via-tool-group' });
+const toolDefs: { id: AnnotTool; icon: string; label: string }[] = [
+{ id: 'none',        icon: 'eye',         label: `View (${s.keyToolView.toUpperCase()})` },
+{ id: 'pen',         icon: 'pencil',       label: `Pen (${s.keyToolPen.toUpperCase()})` },
+{ id: 'highlighter', icon: 'highlighter',  label: `Highlight (${s.keyToolHighlight.toUpperCase()})` },
+{ id: 'eraser',      icon: 'eraser',       label: `Erase (${s.keyToolErase.toUpperCase()})` },
+{ id: 'note',        icon: 'sticky-note',  label: `Note (${s.keyToolNote.toUpperCase()})` },
 ];
-
-for (const t of tools) {
-const btn = bar.createEl('button', { cls: 'via-btn', text: t.label });
+for (const t of toolDefs) {
+const btn = toolGroup.createEl('div', { cls: 'clickable-icon via-tool-btn' });
 btn.dataset.tool = t.id;
-btn.title = `${t.label} (${t.key})`;
-if (t.id === this.currentTool) btn.classList.add('via-btn-active');
+setIcon(btn, t.icon);
+setTooltip(btn, t.label);
+if (t.id === this.currentTool) btn.classList.add('is-active');
 btn.addEventListener('click', () => this.setTool(t.id));
 }
 
 bar.createEl('div', { cls: 'via-toolbar-sep' });
 
-// Color picker section
-this.colorSwatchEls = [];
-this.colorSectionEl = bar.createEl('div', { cls: 'via-pdf-color-section' });
-const initPresets = this.currentTool === 'highlighter' ? this.HIGHLIGHT_PRESETS : this.PEN_PRESETS;
-for (const color of initPresets) {
-const swatch = this.colorSectionEl.createEl('button', { cls: 'via-color-swatch' });
-swatch.style.background = color;
-swatch.dataset.color    = color;
-swatch.title            = color;
-swatch.addEventListener('click', () => this.applyColor(swatch.dataset.color!));
-this.colorSwatchEls.push(swatch);
-}
-const customLabel = this.colorSectionEl.createEl('label', { cls: 'via-color-swatch via-color-custom', title: 'Custom colour' });
-const customInput = customLabel.createEl('input');
-customInput.type      = 'color';
-customInput.className = 'via-color-custom-input';
-this.colorCustomInputEl = customInput;
-
-customInput.addEventListener('input', () => {
-const tool = this.currentTool;
-if (tool !== 'pen' && tool !== 'highlighter') return;
-const presets = tool === 'pen' ? this.PEN_PRESETS : this.HIGHLIGHT_PRESETS;
-const color   = customInput.value.toLowerCase();
-for (const sw of this.colorSwatchEls)
-sw.classList.toggle('via-color-swatch-active', sw.dataset.color?.toLowerCase() === color);
-customInput.parentElement?.classList.toggle('via-color-swatch-active', !presets.some(c => c.toLowerCase() === color));
-});
-customInput.addEventListener('change', () => this.applyColor(customInput.value));
-
-this.colorSepEl = bar.createEl('div', { cls: 'via-toolbar-sep' });
-
+// ── Color dot (shown for pen/highlighter) ──────────────────────────────
 const showColors = this.currentTool === 'pen' || this.currentTool === 'highlighter';
-this.colorSectionEl.style.display = showColors ? 'flex' : 'none';
-this.colorSepEl.style.display     = showColors ? '' : 'none';
-if (showColors) this.syncColorPicker(this.currentTool as 'pen' | 'highlighter');
+this.colorDotBtnEl = bar.createEl('button', { cls: 'via-color-dot-btn' }) as HTMLButtonElement;
+const initColor = this.currentTool === 'pen' ? s.penColor : s.highlighterColor;
+this.colorDotBtnEl.style.background = initColor;
+this.colorDotBtnEl.style.display = showColors ? '' : 'none';
+setTooltip(this.colorDotBtnEl, 'Color & size options');
+this.colorDotBtnEl.addEventListener('click', (e) => this.toggleColorPopover(e));
 
-// Width / opacity sliders
-this.widthSectionEl = bar.createEl('div', { cls: 'via-pdf-width-section' });
-const widthRow = this.widthSectionEl.createEl('div', { cls: 'via-pdf-width-row' });
-widthRow.createEl('span', { cls: 'via-pdf-slider-label', text: 'Size' });
-this.widthSliderEl = widthRow.createEl('input');
-this.widthSliderEl.type      = 'range';
-this.widthSliderEl.className = 'via-pdf-slider';
-this.widthLabelEl = widthRow.createEl('span', { cls: 'via-pdf-slider-value' });
+bar.createEl('div', { cls: 'via-toolbar-sep' });
 
-this.widthSliderEl.addEventListener('input',  () => {
-if (this.widthLabelEl) this.widthLabelEl.textContent = `${this.widthSliderEl!.value}px`;
-});
-this.widthSliderEl.addEventListener('change', () => this.applyWidth(Number(this.widthSliderEl!.value)));
-
-this.opacityRowEl = this.widthSectionEl.createEl('div', { cls: 'via-pdf-width-row' });
-this.opacityRowEl.createEl('span', { cls: 'via-pdf-slider-label', text: 'Opacity' });
-this.opacitySliderEl = this.opacityRowEl.createEl('input');
-this.opacitySliderEl.type      = 'range';
-this.opacitySliderEl.min       = '0.1';
-this.opacitySliderEl.max       = '1.0';
-this.opacitySliderEl.step      = '0.05';
-this.opacitySliderEl.className = 'via-pdf-slider';
-this.opacityLabelEl = this.opacityRowEl.createEl('span', { cls: 'via-pdf-slider-value' });
-
-this.opacitySliderEl.addEventListener('input',  () => {
-const v = Number(this.opacitySliderEl!.value);
-if (this.opacityLabelEl) this.opacityLabelEl.textContent = `${Math.round(v * 100)}%`;
-});
-this.opacitySliderEl.addEventListener('change', () => this.applyOpacity(Number(this.opacitySliderEl!.value)));
-
-this.widthSepEl = bar.createEl('div', { cls: 'via-toolbar-sep' });
-this.widthSectionEl.style.display = showColors ? 'flex' : 'none';
-this.widthSepEl.style.display     = showColors ? '' : 'none';
-if (showColors) this.syncWidthSlider(this.currentTool as 'pen' | 'highlighter');
-
-// Snap direction button
-this.snapDirBtnEl = bar.createEl('button', { cls: 'via-btn via-pdf-snap-btn' }) as HTMLButtonElement;
+// ── Snap button ────────────────────────────────────────────────────────
+this.snapDirBtnEl = bar.createEl('button', { cls: 'via-pdf-snap-btn' }) as HTMLButtonElement;
 this.updateSnapDirBtn();
 this.snapDirBtnEl.addEventListener('click', () => {
 const dirs: SnapDirection[] = ['horizontal', 'vertical', 'slope'];
@@ -467,45 +401,48 @@ this.updateSnapDirBtn();
 
 bar.createEl('div', { cls: 'via-toolbar-sep' });
 
-const zoomOut = bar.createEl('button', { cls: 'via-btn via-btn-zoom', text: '\u2212' });
-zoomOut.title = 'Zoom out (Ctrl+\u2212)';
-zoomOut.addEventListener('click', () => this.stepZoom(-1));
+// ── Zoom ───────────────────────────────────────────────────────────────
+const zoomOutBtn = bar.createEl('div', { cls: 'clickable-icon' });
+setIcon(zoomOutBtn, 'zoom-out');
+setTooltip(zoomOutBtn, 'Zoom out (Ctrl+−)');
+zoomOutBtn.addEventListener('click', () => this.stepZoom(-1));
 
 this.zoomLabelEl = bar.createEl('button', {
 cls:  'via-btn via-btn-zoom-label',
 text: `${Math.round(this.currentScale * 100)}%`,
 });
-this.zoomLabelEl.title = `Reset zoom (Ctrl+0)`;
+setTooltip(this.zoomLabelEl, 'Reset zoom (Ctrl+0)');
 this.zoomLabelEl.addEventListener('click', () => this.setZoom(s.pdfDefaultZoom, this.viewportCenterFrac()));
 
-const zoomIn = bar.createEl('button', { cls: 'via-btn via-btn-zoom', text: '+' });
-zoomIn.title = 'Zoom in (Ctrl+=)';
-zoomIn.addEventListener('click', () => this.stepZoom(+1));
+const zoomInBtn = bar.createEl('div', { cls: 'clickable-icon' });
+setIcon(zoomInBtn, 'zoom-in');
+setTooltip(zoomInBtn, 'Zoom in (Ctrl+=)');
+zoomInBtn.addEventListener('click', () => this.stepZoom(+1));
 
 bar.createEl('div', { cls: 'via-toolbar-sep' });
 
-this.pageIndicatorEl = bar.createEl('button', { cls: 'via-pdf-page-indicator', text: '\u2014 / \u2014' });
-this.pageIndicatorEl.title = 'Click to jump to page';
+// ── Page indicator ─────────────────────────────────────────────────────
+this.pageIndicatorEl = bar.createEl('button', { cls: 'via-pdf-page-indicator', text: '— / —' });
+setTooltip(this.pageIndicatorEl, 'Jump to page');
 this.pageIndicatorEl.addEventListener('click', () => this.openPageJumpInput());
 
-bar.createEl('div', { cls: 'via-toolbar-sep' });
+// ── Spacer ─────────────────────────────────────────────────────────────
+bar.createEl('div', { cls: 'via-toolbar-spacer' });
 
-const clearBtn = bar.createEl('button', { cls: 'via-btn via-btn-danger', text: '🗑 Clear page' });
+// ── Clear & Save ───────────────────────────────────────────────────────
+const clearBtn = bar.createEl('div', { cls: 'clickable-icon via-icon-danger' });
+setIcon(clearBtn, 'trash-2');
+setTooltip(clearBtn, 'Clear page annotations');
 clearBtn.addEventListener('click', () => this.clearCurrentPageAnnotations());
 
-const saveBtn = bar.createEl('button', { cls: 'via-btn via-btn-save', text: '💾 Save annotations' });
+const saveBtn = bar.createEl('div', { cls: 'clickable-icon via-icon-save' });
+setIcon(saveBtn, 'save');
+setTooltip(saveBtn, 'Save annotations');
 saveBtn.addEventListener('click', () => this.persistAnnotations());
-
-const exportBtn = bar.createEl('button', { cls: 'via-btn via-btn-export', text: '📤 Export PDF' });
-exportBtn.title = 'Export PDF with annotations embedded';
-exportBtn.addEventListener('click', () => {
-if (this.currentFile && this.pdfDoc) {
-exportAnnotatedPdf(this.app, this.currentFile, this.pdfDoc, this.annotData);
-}
-});
 
 return bar;
 }
+
 
 // Zoom -------------------------------------------------------------------
 
@@ -635,92 +572,134 @@ ctx.container.style.cursor          = this.currentTool === 'note' ? 'text' : '';
 }
 
 private setTool(tool: AnnotTool): void {
+this.hideColorPopover();
 this.currentTool = tool;
-this.containerEl.querySelectorAll('.via-pdf-toolbar [data-tool]').forEach(b =>
-b.classList.toggle('via-btn-active', (b as HTMLElement).dataset.tool === tool)
+this.containerEl.querySelectorAll('.via-pdf-toolbar .via-tool-btn').forEach(b =>
+b.classList.toggle('is-active', (b as HTMLElement).dataset.tool === tool)
 );
 this.updateCanvasInteraction();
 const showColors = tool === 'pen' || tool === 'highlighter';
-if (this.colorSectionEl) this.colorSectionEl.style.display = showColors ? 'flex' : 'none';
-if (this.colorSepEl)     this.colorSepEl.style.display     = showColors ? '' : 'none';
-if (this.widthSectionEl) this.widthSectionEl.style.display = showColors ? 'flex' : 'none';
-if (this.widthSepEl)     this.widthSepEl.style.display     = showColors ? '' : 'none';
+if (this.colorDotBtnEl) {
+this.colorDotBtnEl.style.display = showColors ? '' : 'none';
 if (showColors) {
-this.syncColorPicker(tool);
-this.syncWidthSlider(tool);
+const color = tool === 'pen' ? this.plugin.settings.penColor : this.plugin.settings.highlighterColor;
+this.colorDotBtnEl.style.background = color;
 }
 }
-
-// Color picker ------------------------------------------------------------
-
-private syncColorPicker(tool: 'pen' | 'highlighter'): void {
-const presets     = tool === 'pen' ? this.PEN_PRESETS : this.HIGHLIGHT_PRESETS;
-const activeColor = (tool === 'pen'
-? this.plugin.settings.penColor
-: this.plugin.settings.highlighterColor
-).toLowerCase();
-
-for (let i = 0; i < this.colorSwatchEls.length; i++) {
-const swatch = this.colorSwatchEls[i];
-if (!swatch) continue;
-const color = presets[i] ?? '';
-swatch.style.background = color;
-swatch.dataset.color    = color;
-swatch.title            = color;
-swatch.classList.toggle('via-color-swatch-active', color.toLowerCase() === activeColor);
 }
 
-if (this.colorCustomInputEl) {
-this.colorCustomInputEl.value = activeColor;
+// Color dot & popover ----------------------------------------------------
+
+private toggleColorPopover(e: MouseEvent): void {
+if (this.colorPopoverEl) { this.hideColorPopover(); return; }
+e.stopPropagation();
+this.showColorPopover(e.currentTarget as HTMLElement);
+}
+
+private showColorPopover(anchor: HTMLElement): void {
+const tool = this.currentTool as 'pen' | 'highlighter';
+if (tool !== 'pen' && tool !== 'highlighter') return;
+
+const popover = document.createElement('div');
+popover.className = 'via-color-popover';
+this.colorPopoverEl = popover;
+
+// Swatch row
+const swatchRow = popover.createEl('div', { cls: 'via-color-popover-swatches' });
+const presets    = tool === 'pen' ? this.PEN_PRESETS : this.HIGHLIGHT_PRESETS;
+const activeColor = (tool === 'pen' ? this.plugin.settings.penColor : this.plugin.settings.highlighterColor).toLowerCase();
+
+for (const color of presets) {
+const sw = swatchRow.createEl('button', { cls: 'via-color-swatch' });
+sw.style.background = color;
+sw.dataset.color    = color;
+sw.classList.toggle('via-color-swatch-active', color.toLowerCase() === activeColor);
+setTooltip(sw, color);
+sw.addEventListener('click', () => { this.applyColor(color); this.hideColorPopover(); });
+}
+
+const customLabel = swatchRow.createEl('label', { cls: 'via-color-swatch via-color-custom' });
+setTooltip(customLabel as unknown as HTMLElement, 'Custom colour');
+const customInput = customLabel.createEl('input');
+customInput.type  = 'color';
+customInput.className = 'via-color-custom-input';
+customInput.value = activeColor;
 const isCustom = !presets.some(c => c.toLowerCase() === activeColor);
-this.colorCustomInputEl.parentElement?.classList.toggle('via-color-swatch-active', isCustom);
+customLabel.classList.toggle('via-color-swatch-active', isCustom);
+
+customInput.addEventListener('input', () => {
+const c = customInput.value.toLowerCase();
+swatchRow.querySelectorAll<HTMLElement>('.via-color-swatch').forEach(s =>
+s.classList.toggle('via-color-swatch-active', s.dataset.color?.toLowerCase() === c)
+);
+customLabel.classList.toggle('via-color-swatch-active', !presets.some(p => p.toLowerCase() === c));
+});
+customInput.addEventListener('change', () => { this.applyColor(customInput.value); this.hideColorPopover(); });
+
+popover.createEl('hr', { cls: 'via-color-popover-sep' });
+
+// Size slider
+const sizeRow   = popover.createEl('div', { cls: 'via-popover-slider-row' });
+sizeRow.createEl('span', { cls: 'via-popover-slider-label', text: 'Size' });
+const sizeSlider = sizeRow.createEl('input');
+sizeSlider.type  = 'range';
+sizeSlider.className = 'via-popover-slider';
+if (tool === 'pen') { sizeSlider.min = '1';  sizeSlider.max = '20'; sizeSlider.step = '1'; sizeSlider.value = String(this.plugin.settings.penWidth); }
+else               { sizeSlider.min = '10'; sizeSlider.max = '40'; sizeSlider.step = '2'; sizeSlider.value = String(this.plugin.settings.highlighterWidth); }
+const sizeLabel = sizeRow.createEl('span', { cls: 'via-popover-slider-value', text: `${sizeSlider.value}px` });
+sizeSlider.addEventListener('input',  () => sizeLabel.textContent = `${sizeSlider.value}px`);
+sizeSlider.addEventListener('change', () => this.applyWidth(Number(sizeSlider.value)));
+
+// Opacity slider (highlighter only)
+if (tool === 'highlighter') {
+const opRow    = popover.createEl('div', { cls: 'via-popover-slider-row' });
+opRow.createEl('span', { cls: 'via-popover-slider-label', text: 'Opacity' });
+const opSlider = opRow.createEl('input');
+opSlider.type  = 'range'; opSlider.min = '0.1'; opSlider.max = '1.0'; opSlider.step = '0.05';
+opSlider.className = 'via-popover-slider';
+opSlider.value     = String(this.plugin.settings.highlighterOpacity);
+const opLabel  = opRow.createEl('span', { cls: 'via-popover-slider-value', text: `${Math.round(this.plugin.settings.highlighterOpacity * 100)}%` });
+opSlider.addEventListener('input',  () => opLabel.textContent = `${Math.round(Number(opSlider.value) * 100)}%`);
+opSlider.addEventListener('change', () => this.applyOpacity(Number(opSlider.value)));
 }
+
+// Append to body and position below anchor
+document.body.appendChild(popover);
+const rect = anchor.getBoundingClientRect();
+popover.style.top  = `${rect.bottom + 6}px`;
+popover.style.left = `${Math.max(4, rect.left)}px`;
+
+// Dismiss on outside click
+const dismiss = (ev: MouseEvent) => {
+if (!popover.contains(ev.target as Node)) {
+this.hideColorPopover();
+document.removeEventListener('mousedown', dismiss, true);
+}
+};
+setTimeout(() => document.addEventListener('mousedown', dismiss, true), 0);
+}
+
+private hideColorPopover(): void {
+this.colorPopoverEl?.remove();
+this.colorPopoverEl = null;
 }
 
 private applyColor(color: string): void {
 const tool = this.currentTool;
 if (tool !== 'pen' && tool !== 'highlighter') return;
-if (tool === 'pen') this.plugin.settings.penColor = color;
-else                this.plugin.settings.highlighterColor = color;
+if (tool === 'pen') this.plugin.settings.penColor          = color;
+else               this.plugin.settings.highlighterColor  = color;
 this.plugin.saveSettings();
-this.syncColorPicker(tool);
+if (this.colorDotBtnEl) this.colorDotBtnEl.style.background = color;
 }
 
-// Width / opacity slider -------------------------------------------------
-
-private syncWidthSlider(tool: 'pen' | 'highlighter'): void {
-if (!this.widthSliderEl || !this.widthLabelEl) return;
-
-if (tool === 'pen') {
-this.widthSliderEl.min   = '1';
-this.widthSliderEl.max   = '20';
-this.widthSliderEl.step  = '1';
-const w = this.plugin.settings.penWidth;
-this.widthSliderEl.value  = String(w);
-this.widthLabelEl.textContent = `${w}px`;
-} else {
-this.widthSliderEl.min   = '10';
-this.widthSliderEl.max   = '40';
-this.widthSliderEl.step  = '2';
-const w = this.plugin.settings.highlighterWidth;
-this.widthSliderEl.value  = String(w);
-this.widthLabelEl.textContent = `${w}px`;
-}
-
-const showOpacity = tool === 'highlighter';
-if (this.opacityRowEl) this.opacityRowEl.style.display = showOpacity ? 'flex' : 'none';
-if (showOpacity && this.opacitySliderEl && this.opacityLabelEl) {
-const op = this.plugin.settings.highlighterOpacity;
-this.opacitySliderEl.value        = String(op);
-this.opacityLabelEl.textContent   = `${Math.round(op * 100)}%`;
-}
-}
+// Width / opacity ---------------------------------------------------------
 
 private applyWidth(value: number): void {
 const tool = this.currentTool;
 if (tool !== 'pen' && tool !== 'highlighter') return;
-if (tool === 'pen') this.plugin.settings.penWidth          = value;
-else                this.plugin.settings.highlighterWidth  = value;
+if (tool === 'pen') this.plugin.settings.penWidth         = value;
+else               this.plugin.settings.highlighterWidth = value;
 this.plugin.saveSettings();
 }
 
@@ -733,11 +712,15 @@ this.plugin.saveSettings();
 
 private updateSnapDirBtn(): void {
 if (!this.snapDirBtnEl) return;
-const labels = { horizontal: '⟷ H', vertical: '↕ V', slope: '↗ 45°' };
+const iconMap:  Record<SnapDirection, string> = { horizontal: 'arrow-left-right', vertical: 'arrow-up-down', slope: 'arrow-up-right' };
+const labelMap: Record<SnapDirection, string> = { horizontal: 'H', vertical: 'V', slope: '45°' };
 const { snapActivateKey, keySnapCycle } = this.plugin.settings;
-this.snapDirBtnEl.textContent = labels[this.snapDirection];
-this.snapDirBtnEl.title =
-`Snap: ${this.snapDirection} — hold ${snapActivateKey} while drawing to activate · ${snapActivateKey}+${keySnapCycle.toUpperCase()} to cycle`;
+this.snapDirBtnEl.empty();
+const iconSpan = this.snapDirBtnEl.createEl('span', { cls: 'via-snap-icon' });
+setIcon(iconSpan, iconMap[this.snapDirection]);
+this.snapDirBtnEl.createSpan({ cls: 'via-snap-label', text: labelMap[this.snapDirection] });
+setTooltip(this.snapDirBtnEl,
+`Snap: ${this.snapDirection} — hold ${snapActivateKey} to activate · ${snapActivateKey}+${keySnapCycle.toUpperCase()} to cycle`);
 }
 
 // Page jump --------------------------------------------------------------
@@ -958,7 +941,9 @@ this.bodyEl.insertBefore(sidebar, this.scrollAreaEl);
 
 const header   = sidebar.createEl('div', { cls: 'via-pdf-toc-header' });
 header.createEl('span', { text: 'Contents' });
-const closeBtn = header.createEl('button', { cls: 'via-btn', text: '✕' });
+const closeBtn = header.createEl('div', { cls: 'clickable-icon' });
+setIcon(closeBtn, 'x');
+setTooltip(closeBtn, 'Close table of contents');
 closeBtn.addEventListener('click', () => {
 this.tocVisible = false;
 sidebar.remove();
@@ -1039,7 +1024,10 @@ el.dataset.noteId  = note.id;
 const header = el.createEl('div', { cls: 'via-pdf-note-header' });
 
 // Drag handle
-header.createEl('span', { cls: 'via-pdf-note-drag', text: '⠿' }).addEventListener('mousedown', (e) => {
+const dragHandle = header.createEl('span', { cls: 'via-pdf-note-drag' });
+setIcon(dragHandle, 'grip-vertical');
+setTooltip(dragHandle, 'Drag note');
+dragHandle.addEventListener('mousedown', (e) => {
 e.preventDefault();
 const startX = e.clientX, startY = e.clientY;
 const origLeft = note.x, origTop = note.y;
@@ -1061,7 +1049,9 @@ window.addEventListener('mousemove', onMove);
 window.addEventListener('mouseup',   onUp);
 });
 
-const deleteBtn = header.createEl('button', { cls: 'via-pdf-note-delete', text: '✕' });
+const deleteBtn = header.createEl('button', { cls: 'via-pdf-note-delete' });
+setIcon(deleteBtn, 'x');
+setTooltip(deleteBtn, 'Delete note');
 deleteBtn.addEventListener('click', () => {
 this.annotData = {
 ...this.annotData,
