@@ -1,16 +1,27 @@
-import { FileView, Notice, TFile, WorkspaceLeaf, Menu, Modal, App, setIcon, setTooltip } from 'obsidian';
-import { VIEW_TYPE_SPREADSHEET } from '../types';
-import type ViewItAllPlugin from '../main';
+import {
+	FileView,
+	Notice,
+	TFile,
+	WorkspaceLeaf,
+	Menu,
+	Modal,
+	App,
+	setIcon,
+	setTooltip,
+} from "obsidian";
+import { VIEW_TYPE_SPREADSHEET } from "../types";
+import { evaluateSheet } from "../utils/formulaEval";
+import type ViewItAllPlugin from "../main";
 
 // ── SheetJS type surface ──────────────────────────────────────────────────────
 
 type CellValue = string | number | boolean | null | undefined;
 
 interface XLSXCell {
-	v?: CellValue;  // primitive value
-	f?: string;     // formula (without leading '=')
-	t?: string;     // type: 'n' | 's' | 'b' | 'e' | 'z'
-	w?: string;     // formatted text
+	v?: CellValue; // primitive value
+	f?: string; // formula (without leading '=')
+	t?: string; // type: 'n' | 's' | 'b' | 'e' | 'z'
+	w?: string; // formatted text
 }
 
 /**
@@ -30,8 +41,8 @@ interface SheetRange {
 }
 
 interface XLSXModule {
-	read(data: Uint8Array | ArrayBuffer, opts: { type: 'array' }): XLSXWorkBook;
-	write(wb: XLSXWorkBook, opts: { type: 'array'; bookType: string }): Uint8Array;
+	read(data: Uint8Array | ArrayBuffer, opts: { type: "array" }): XLSXWorkBook;
+	write(wb: XLSXWorkBook, opts: { type: string; bookType: string }): unknown;
 	utils: {
 		encode_cell(addr: { r: number; c: number }): string;
 		decode_cell(addr: string): { r: number; c: number };
@@ -43,11 +54,11 @@ interface XLSXModule {
 // ── Sheet helpers ─────────────────────────────────────────────────────────────
 
 function sheetGetRef(sheet: XLSXSheet): string | undefined {
-	return sheet['!ref'] as string | undefined;
+	return sheet["!ref"] as string | undefined;
 }
 
 function sheetSetRef(sheet: XLSXSheet, ref: string): void {
-	(sheet as Record<string, unknown>)['!ref'] = ref;
+	(sheet as Record<string, unknown>)["!ref"] = ref;
 }
 
 function sheetGetCell(sheet: XLSXSheet, ref: string): XLSXCell | undefined {
@@ -93,13 +104,19 @@ export class SpreadsheetView extends FileView {
 		this.plugin = plugin;
 	}
 
-	getViewType(): string { return VIEW_TYPE_SPREADSHEET; }
-	getDisplayText(): string { return this.file?.basename ?? 'Spreadsheet'; }
-	getIcon(): string { return 'table'; }
+	getViewType(): string {
+		return VIEW_TYPE_SPREADSHEET;
+	}
+	getDisplayText(): string {
+		return this.file?.basename ?? "Spreadsheet";
+	}
+	getIcon(): string {
+		return "table";
+	}
 
 	canAcceptExtension(extension: string): boolean {
-		if (extension === 'xlsx') return this.plugin.settings.enableXlsx;
-		if (extension === 'csv') return this.plugin.settings.enableCsv;
+		if (extension === "xlsx") return this.plugin.settings.enableXlsx;
+		if (extension === "csv") return this.plugin.settings.enableCsv;
 		return false;
 	}
 
@@ -111,7 +128,7 @@ export class SpreadsheetView extends FileView {
 		this.selCol = -1;
 
 		if (!this.xlsx) {
-			this.xlsx = (await import('xlsx')) as unknown as XLSXModule;
+			this.xlsx = (await import("xlsx")) as unknown as XLSXModule;
 		}
 		await this.renderFile(file);
 	}
@@ -142,15 +159,19 @@ export class SpreadsheetView extends FileView {
 		this.contentEl.empty();
 		if (!this.xlsx) return;
 
-		const isBottom = this.plugin.settings.spreadsheetToolbarPosition === 'bottom';
-		const isCsv = file.extension === 'csv';
+		const isBottom =
+			this.plugin.settings.spreadsheetToolbarPosition === "bottom";
+		const isCsv = file.extension === "csv";
 
 		// Read raw bytes
 		let data: ArrayBuffer;
 		try {
 			data = await this.app.vault.adapter.readBinary(file.path);
 		} catch (err) {
-			this.contentEl.createEl('p', { cls: 'via-error', text: `Failed to read file: ${String(err)}` });
+			this.contentEl.createEl("p", {
+				cls: "via-error",
+				text: `Failed to read file: ${String(err)}`,
+			});
 			return;
 		}
 
@@ -159,100 +180,138 @@ export class SpreadsheetView extends FileView {
 
 		// Parse workbook
 		try {
-			this.workbook = this.xlsx.read(new Uint8Array(data), { type: 'array' });
+			this.workbook = this.xlsx.read(new Uint8Array(data), {
+				type: "array",
+			});
 		} catch (err) {
-			this.contentEl.createEl('p', { cls: 'via-error', text: `Failed to parse spreadsheet: ${String(err)}` });
+			this.contentEl.createEl("p", {
+				cls: "via-error",
+				text: `Failed to parse spreadsheet: ${String(err)}`,
+			});
 			return;
 		}
 
+		// Evaluate formulas on initial load
+		this.evaluateAllFormulas();
+
 		// Root wrapper
-		this.wrapper = this.contentEl.createEl('div', { cls: 'via-sheet-wrapper' });
-		if (isBottom) this.wrapper.classList.add('via-sheet-wrapper--toolbar-bottom');
+		this.wrapper = this.contentEl.createEl("div", {
+			cls: "via-sheet-wrapper",
+		});
+		if (isBottom)
+			this.wrapper.classList.add("via-sheet-wrapper--toolbar-bottom");
 
 		// ── Toolbar ───────────────────────────────────────────────────────────
-		const toolbar = this.wrapper.createEl('div', { cls: 'via-sheet-toolbar' });
+		const toolbar = this.wrapper.createEl("div", {
+			cls: "via-sheet-toolbar",
+		});
 
 		// Edit / View toggle
-		this.editToggleBtn = toolbar.createEl('div', { cls: 'clickable-icon' });
-		setIcon(this.editToggleBtn, 'pencil');
-		setTooltip(this.editToggleBtn, 'Switch to edit mode');
-		this.editToggleBtn.addEventListener('click', () => this.toggleEditMode());
+		this.editToggleBtn = toolbar.createEl("div", { cls: "clickable-icon" });
+		setIcon(this.editToggleBtn, "pencil");
+		setTooltip(this.editToggleBtn, "Switch to edit mode");
+		this.editToggleBtn.addEventListener("click", () =>
+			this.toggleEditMode(),
+		);
 
-		toolbar.createEl('div', { cls: 'via-toolbar-sep' });
+		toolbar.createEl("div", { cls: "via-toolbar-sep" });
 
 		// Save button
-		this.saveBtn = toolbar.createEl('div', { cls: 'clickable-icon via-icon-save' });
-		setIcon(this.saveBtn, 'save');
-		setTooltip(this.saveBtn, 'Save (Ctrl+S)');
-		this.saveBtn.style.display = 'none';
-		this.saveBtn.addEventListener('click', () => this.saveFile());
+		this.saveBtn = toolbar.createEl("div", {
+			cls: "clickable-icon via-icon-save",
+		});
+		setIcon(this.saveBtn, "save");
+		setTooltip(this.saveBtn, "Save (Ctrl+S)");
+		this.saveBtn.style.display = "none";
+		this.saveBtn.addEventListener("click", () => this.saveFile());
 
 		// Undo (revert to last save)
-		this.undoBtn = toolbar.createEl('div', { cls: 'clickable-icon' });
-		setIcon(this.undoBtn, 'undo-2');
-		setTooltip(this.undoBtn, 'Revert to last save');
-		this.undoBtn.style.display = 'none';
-		this.undoBtn.addEventListener('click', () => this.revertToSaved());
+		this.undoBtn = toolbar.createEl("div", { cls: "clickable-icon" });
+		setIcon(this.undoBtn, "undo-2");
+		setTooltip(this.undoBtn, "Revert to last save");
+		this.undoBtn.style.display = "none";
+		this.undoBtn.addEventListener("click", () => this.revertToSaved());
 
 		// Dirty indicator (yellow dot)
-		this.dirtyIndicator = toolbar.createEl('div', { cls: 'via-docx-dirty-dot' });
-		this.dirtyIndicator.style.display = 'none';
-		setTooltip(this.dirtyIndicator, 'Unsaved changes');
+		this.dirtyIndicator = toolbar.createEl("div", {
+			cls: "via-docx-dirty-dot",
+		});
+		this.dirtyIndicator.style.display = "none";
+		setTooltip(this.dirtyIndicator, "Unsaved changes");
 
-		toolbar.createEl('div', { cls: 'via-toolbar-sep' });
+		toolbar.createEl("div", { cls: "via-toolbar-sep" });
 
 		// Add Row
-		this.addRowBtn = toolbar.createEl('div', { cls: 'clickable-icon' });
-		setIcon(this.addRowBtn, 'plus-square');
-		setTooltip(this.addRowBtn, 'Add row at bottom');
-		this.addRowBtn.style.display = 'none';
-		this.addRowBtn.addEventListener('click', () => this.addRow());
+		this.addRowBtn = toolbar.createEl("div", { cls: "clickable-icon" });
+		setIcon(this.addRowBtn, "plus-square");
+		setTooltip(this.addRowBtn, "Add row at bottom");
+		this.addRowBtn.style.display = "none";
+		this.addRowBtn.addEventListener("click", () => this.addRow());
 
 		// Add Column
-		this.addColBtn = toolbar.createEl('div', { cls: 'clickable-icon' });
-		setIcon(this.addColBtn, 'between-vertical-start');
-		setTooltip(this.addColBtn, 'Add column at right');
-		this.addColBtn.style.display = 'none';
-		this.addColBtn.addEventListener('click', () => this.addColumn());
+		this.addColBtn = toolbar.createEl("div", { cls: "clickable-icon" });
+		setIcon(this.addColBtn, "between-vertical-start");
+		setTooltip(this.addColBtn, "Add column at right");
+		this.addColBtn.style.display = "none";
+		this.addColBtn.addEventListener("click", () => this.addColumn());
 
-		toolbar.createEl('div', { cls: 'via-toolbar-sep' });
+		toolbar.createEl("div", { cls: "via-toolbar-sep" });
 
 		// File label
-		const fileLabel = toolbar.createEl('div', { cls: 'via-sheet-file-label' });
-		setIcon(fileLabel.createEl('div', { cls: 'clickable-icon' }), isCsv ? 'file-text' : 'table');
-		fileLabel.createEl('span', { text: file.basename, cls: 'via-sheet-file-name' });
+		const fileLabel = toolbar.createEl("div", {
+			cls: "via-sheet-file-label",
+		});
+		setIcon(
+			fileLabel.createEl("div", { cls: "clickable-icon" }),
+			isCsv ? "file-text" : "table",
+		);
+		fileLabel.createEl("span", {
+			text: file.basename,
+			cls: "via-sheet-file-name",
+		});
 
-		toolbar.createEl('div', { cls: 'via-toolbar-sep' });
+		toolbar.createEl("div", { cls: "via-toolbar-sep" });
 
 		// Sheet tabs (multi-sheet xlsx)
-		this.tabBar = toolbar.createEl('div', { cls: 'via-sheet-tabs' });
+		this.tabBar = toolbar.createEl("div", { cls: "via-sheet-tabs" });
 		if (!isCsv && this.workbook.SheetNames.length > 1) {
 			this.renderTabs();
 		}
 
-		toolbar.createEl('div', { cls: 'via-toolbar-spacer' });
+		toolbar.createEl("div", { cls: "via-toolbar-spacer" });
 
 		// Row × Col info
-		this.infoEl = toolbar.createEl('div', { cls: 'via-sheet-info' });
+		this.infoEl = toolbar.createEl("div", { cls: "via-sheet-info" });
 		this.updateInfo();
 
 		// ── Formula bar ───────────────────────────────────────────────────────
-		const fbar = this.wrapper.createEl('div', { cls: 'via-sheet-formula-bar' });
-		this.formulaRef = fbar.createEl('div', { cls: 'via-sheet-formula-ref' });
-		fbar.createEl('div', { cls: 'via-sheet-formula-sep' });
-		this.formulaInput = fbar.createEl('input', {
-			cls: 'via-sheet-formula-input',
-			type: 'text',
-			placeholder: 'Select a cell to edit…',
+		const fbar = this.wrapper.createEl("div", {
+			cls: "via-sheet-formula-bar",
 		});
-		this.formulaInput.addEventListener('keydown', (e: KeyboardEvent) => {
-			if (e.key === 'Enter') { e.preventDefault(); this.commitFormulaBar(); }
-			if (e.key === 'Escape') { e.preventDefault(); this.refreshFormulaBar(); this.formulaInput?.blur(); }
+		this.formulaRef = fbar.createEl("div", {
+			cls: "via-sheet-formula-ref",
+		});
+		fbar.createEl("div", { cls: "via-sheet-formula-sep" });
+		this.formulaInput = fbar.createEl("input", {
+			cls: "via-sheet-formula-input",
+			type: "text",
+			placeholder: "Select a cell to edit…",
+		});
+		this.formulaInput.addEventListener("keydown", (e: KeyboardEvent) => {
+			if (e.key === "Enter") {
+				e.preventDefault();
+				this.commitFormulaBar();
+			}
+			if (e.key === "Escape") {
+				e.preventDefault();
+				this.refreshFormulaBar();
+				this.formulaInput?.blur();
+			}
 		});
 
 		// Ctrl/Cmd+S — save
-		this.registerDomEvent(this.contentEl, 'keydown', (e: KeyboardEvent) => {
-			if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+		this.registerDomEvent(this.contentEl, "keydown", (e: KeyboardEvent) => {
+			if ((e.ctrlKey || e.metaKey) && e.key === "s") {
 				e.preventDefault();
 				void this.saveFile();
 			}
@@ -260,8 +319,12 @@ export class SpreadsheetView extends FileView {
 		this.contentEl.tabIndex = 0;
 
 		// ── Scroll + table ────────────────────────────────────────────────────
-		const scrollEl = this.wrapper.createEl('div', { cls: 'via-sheet-scroll' });
-		this.tableContainer = scrollEl.createEl('div', { cls: 'via-sheet-table-wrap' });
+		const scrollEl = this.wrapper.createEl("div", {
+			cls: "via-sheet-scroll",
+		});
+		this.tableContainer = scrollEl.createEl("div", {
+			cls: "via-sheet-table-wrap",
+		});
 		this.renderSheet();
 	}
 
@@ -270,10 +333,13 @@ export class SpreadsheetView extends FileView {
 		this.tabBar.empty();
 		for (let i = 0; i < this.workbook.SheetNames.length; i++) {
 			const name = this.workbook.SheetNames[i] ?? `Sheet ${i + 1}`;
-			const tab = this.tabBar.createEl('div', { cls: 'via-sheet-tab', text: name });
-			if (i === this.activeSheet) tab.classList.add('is-active');
+			const tab = this.tabBar.createEl("div", {
+				cls: "via-sheet-tab",
+				text: name,
+			});
+			if (i === this.activeSheet) tab.classList.add("is-active");
 			setTooltip(tab, name);
-			tab.addEventListener('click', () => {
+			tab.addEventListener("click", () => {
 				if (i === this.activeSheet) return;
 				this.activeSheet = i;
 				this.selRow = -1;
@@ -294,13 +360,19 @@ export class SpreadsheetView extends FileView {
 		if (!sheetName) return;
 		const sheet = this.workbook.Sheets[sheetName];
 		if (!sheet) {
-			this.tableContainer.createEl('p', { cls: 'via-sheet-empty', text: 'This sheet is empty.' });
+			this.tableContainer.createEl("p", {
+				cls: "via-sheet-empty",
+				text: "This sheet is empty.",
+			});
 			return;
 		}
 
 		const ref = sheetGetRef(sheet);
 		if (!ref) {
-			this.tableContainer.createEl('p', { cls: 'via-sheet-empty', text: 'This sheet is empty.' });
+			this.tableContainer.createEl("p", {
+				cls: "via-sheet-empty",
+				text: "This sheet is empty.",
+			});
 			return;
 		}
 
@@ -308,18 +380,20 @@ export class SpreadsheetView extends FileView {
 		const rowCount = range.e.r + 1;
 		const colCount = range.e.c + 1;
 
-		const table = this.tableContainer.createEl('table', { cls: 'via-sheet-table' });
+		const table = this.tableContainer.createEl("table", {
+			cls: "via-sheet-table",
+		});
 
 		// Column header row
-		const thead = table.createEl('thead');
-		const headerRow = thead.createEl('tr');
-		headerRow.createEl('th', { cls: 'via-sheet-row-num', text: '' });
+		const thead = table.createEl("thead");
+		const headerRow = thead.createEl("tr");
+		headerRow.createEl("th", { cls: "via-sheet-row-num", text: "" });
 		for (let c = 0; c < colCount; c++) {
-			const th = headerRow.createEl('th', { text: colLetter(c) });
-			if (c === this.selCol) th.classList.add('is-selected-col');
+			const th = headerRow.createEl("th", { text: colLetter(c) });
+			if (c === this.selCol) th.classList.add("is-selected-col");
 			// Context menu on column header (edit mode only)
 			const colIdx = c;
-			th.addEventListener('contextmenu', (e: MouseEvent) => {
+			th.addEventListener("contextmenu", (e: MouseEvent) => {
 				if (!this.editMode) return;
 				e.preventDefault();
 				this.showColumnContextMenu(e, colIdx, colCount);
@@ -327,14 +401,17 @@ export class SpreadsheetView extends FileView {
 		}
 
 		// Data rows
-		const tbody = table.createEl('tbody');
+		const tbody = table.createEl("tbody");
 		for (let r = 0; r < rowCount; r++) {
-			const tr = tbody.createEl('tr');
-			const rowNumTd = tr.createEl('td', { cls: 'via-sheet-row-num', text: String(r + 1) });
-			if (r === this.selRow) rowNumTd.classList.add('is-selected-row');
+			const tr = tbody.createEl("tr");
+			const rowNumTd = tr.createEl("td", {
+				cls: "via-sheet-row-num",
+				text: String(r + 1),
+			});
+			if (r === this.selRow) rowNumTd.classList.add("is-selected-row");
 			// Context menu on row number (edit mode only)
 			const rowIdx = r;
-			rowNumTd.addEventListener('contextmenu', (e: MouseEvent) => {
+			rowNumTd.addEventListener("contextmenu", (e: MouseEvent) => {
 				if (!this.editMode) return;
 				e.preventDefault();
 				this.showRowContextMenu(e, rowIdx, rowCount);
@@ -343,12 +420,13 @@ export class SpreadsheetView extends FileView {
 			for (let c = 0; c < colCount; c++) {
 				const cellRef = this.xlsx.utils.encode_cell({ r, c });
 				const cell = sheetGetCell(sheet, cellRef);
-				const td = tr.createEl('td');
+				const td = tr.createEl("td");
 				td.textContent = this.getCellDisplay(cell);
-				if (r === this.selRow && c === this.selCol) td.classList.add('is-selected');
+				if (r === this.selRow && c === this.selCol)
+					td.classList.add("is-selected");
 
-				td.addEventListener('click', () => this.selectCell(r, c));
-				td.addEventListener('dblclick', () => {
+				td.addEventListener("click", () => this.selectCell(r, c));
+				td.addEventListener("dblclick", () => {
 					if (this.editMode) this.beginInlineEdit(td, r, c);
 				});
 			}
@@ -356,10 +434,10 @@ export class SpreadsheetView extends FileView {
 	}
 
 	private getCellDisplay(cell: XLSXCell | undefined): string {
-		if (!cell) return '';
+		if (!cell) return "";
 		if (cell.w !== undefined) return cell.w;
 		if (cell.v !== undefined) return String(cell.v);
-		return '';
+		return "";
 	}
 
 	// ── Selection ─────────────────────────────────────────────────────────────
@@ -374,23 +452,35 @@ export class SpreadsheetView extends FileView {
 	private updateSelectionHighlight(): void {
 		if (!this.tableContainer) return;
 		this.tableContainer
-			.querySelectorAll('.is-selected, .is-selected-col, .is-selected-row')
-			.forEach(el => el.classList.remove('is-selected', 'is-selected-col', 'is-selected-row'));
+			.querySelectorAll(
+				".is-selected, .is-selected-col, .is-selected-row",
+			)
+			.forEach((el) =>
+				el.classList.remove(
+					"is-selected",
+					"is-selected-col",
+					"is-selected-row",
+				),
+			);
 
 		if (this.selRow < 0 || this.selCol < 0) return;
-		const table = this.tableContainer.querySelector('.via-sheet-table');
+		const table = this.tableContainer.querySelector(".via-sheet-table");
 		if (!table) return;
 
 		// Column header highlight
-		const ths = table.querySelectorAll('thead th');
-		ths[this.selCol + 1]?.classList.add('is-selected-col');
+		const ths = table.querySelectorAll("thead th");
+		ths[this.selCol + 1]?.classList.add("is-selected-col");
 
 		// Row header + cell highlight
-		const rows = table.querySelectorAll('tbody tr');
+		const rows = table.querySelectorAll("tbody tr");
 		const row = rows[this.selRow];
 		if (row) {
-			row.querySelector('.via-sheet-row-num')?.classList.add('is-selected-row');
-			row.querySelectorAll('td')[this.selCol + 1]?.classList.add('is-selected');
+			row.querySelector(".via-sheet-row-num")?.classList.add(
+				"is-selected-row",
+			);
+			row.querySelectorAll("td")[this.selCol + 1]?.classList.add(
+				"is-selected",
+			);
 		}
 	}
 
@@ -399,16 +489,21 @@ export class SpreadsheetView extends FileView {
 	private refreshFormulaBar(): void {
 		if (!this.formulaRef || !this.formulaInput || !this.xlsx) return;
 		if (this.selRow < 0 || this.selCol < 0) {
-			this.formulaRef.textContent = '';
-			this.formulaInput.value = '';
+			this.formulaRef.textContent = "";
+			this.formulaInput.value = "";
 			return;
 		}
-		const cellRef = this.xlsx.utils.encode_cell({ r: this.selRow, c: this.selCol });
+		const cellRef = this.xlsx.utils.encode_cell({
+			r: this.selRow,
+			c: this.selCol,
+		});
 		this.formulaRef.textContent = cellRef;
 		const sheetName = this.workbook?.SheetNames[this.activeSheet];
 		const sheet = sheetName ? this.workbook?.Sheets[sheetName] : undefined;
 		const cell = sheet ? sheetGetCell(sheet, cellRef) : undefined;
-		this.formulaInput.value = cell?.f ? '=' + cell.f : this.getCellDisplay(cell);
+		this.formulaInput.value = cell?.f
+			? "=" + cell.f
+			: this.getCellDisplay(cell);
 	}
 
 	private commitFormulaBar(): void {
@@ -425,10 +520,13 @@ export class SpreadsheetView extends FileView {
 		const sheet = sheetName ? this.workbook?.Sheets[sheetName] : undefined;
 		const cellRef = this.xlsx.utils.encode_cell({ r: row, c: col });
 		const cell = sheet ? sheetGetCell(sheet, cellRef) : undefined;
-		const rawValue = cell?.f ? '=' + cell.f : this.getCellDisplay(cell);
+		const rawValue = cell?.f ? "=" + cell.f : this.getCellDisplay(cell);
 
 		td.empty();
-		const input = td.createEl('input', { cls: 'via-sheet-cell-input', type: 'text' });
+		const input = td.createEl("input", {
+			cls: "via-sheet-cell-input",
+			type: "text",
+		});
 		input.value = rawValue;
 		input.focus();
 		input.select();
@@ -444,17 +542,20 @@ export class SpreadsheetView extends FileView {
 				// Auto-start editing the next cell
 				const nextTd = this.getCellTd(nextRow, nextCol);
 				if (nextTd) {
-					setTimeout(() => this.beginInlineEdit(nextTd, nextRow, nextCol), 0);
+					setTimeout(
+						() => this.beginInlineEdit(nextTd, nextRow, nextCol),
+						0,
+					);
 				}
 			}
 		};
 
-		input.addEventListener('keydown', (e: KeyboardEvent) => {
-			if (e.key === 'Enter') {
+		input.addEventListener("keydown", (e: KeyboardEvent) => {
+			if (e.key === "Enter") {
 				e.preventDefault();
 				commit(row + 1, col);
 			}
-			if (e.key === 'Tab') {
+			if (e.key === "Tab") {
 				e.preventDefault();
 				if (e.shiftKey) {
 					commit(row, Math.max(0, col - 1));
@@ -462,24 +563,24 @@ export class SpreadsheetView extends FileView {
 					commit(row, col + 1);
 				}
 			}
-			if (e.key === 'Escape') {
+			if (e.key === "Escape") {
 				e.preventDefault();
 				committed = true;
 				this.renderSheet();
 				this.refreshFormulaBar();
 			}
 		});
-		input.addEventListener('blur', () => commit());
+		input.addEventListener("blur", () => commit());
 	}
 
 	/** Get the <td> element for a given row/col in the rendered table. */
 	private getCellTd(row: number, col: number): HTMLElement | null {
 		if (!this.tableContainer) return null;
-		const rows = this.tableContainer.querySelectorAll('tbody tr');
+		const rows = this.tableContainer.querySelectorAll("tbody tr");
 		const tr = rows[row];
 		if (!tr) return null;
 		// +1 to skip the row number <td>
-		const tds = tr.querySelectorAll('td');
+		const tds = tr.querySelectorAll("td");
 		return (tds[col + 1] as HTMLElement) ?? null;
 	}
 
@@ -492,25 +593,34 @@ export class SpreadsheetView extends FileView {
 
 		const cellRef = this.xlsx.utils.encode_cell({ r: row, c: col });
 		let cell: XLSXCell;
-		if (value.startsWith('=')) {
-			cell = { f: value.slice(1), t: 'n', v: 0 };
-		} else if (value.trim() !== '' && !isNaN(Number(value))) {
-			cell = { v: Number(value), t: 'n', w: value };
+		if (value.startsWith("=")) {
+			cell = { f: value.slice(1), t: "n", v: 0 };
+		} else if (value.trim() !== "" && !isNaN(Number(value))) {
+			cell = { v: Number(value), t: "n", w: value };
 		} else {
-			cell = { v: value, t: 's', w: value };
+			cell = { v: value, t: "s", w: value };
 		}
 		sheetSetCell(sheet, cellRef, cell);
 
 		// Expand sheet !ref if needed
 		const ref = sheetGetRef(sheet);
 		if (!ref) {
-			sheetSetRef(sheet, this.xlsx.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: row, c: col } }));
+			sheetSetRef(
+				sheet,
+				this.xlsx.utils.encode_range({
+					s: { r: 0, c: 0 },
+					e: { r: row, c: col },
+				}),
+			);
 		} else {
 			const range = this.xlsx.utils.decode_range(ref);
 			if (row > range.e.r) range.e.r = row;
 			if (col > range.e.c) range.e.c = col;
 			sheetSetRef(sheet, this.xlsx.utils.encode_range(range));
 		}
+
+		// Re-evaluate all formulas so dependent cells update live
+		this.evaluateAllFormulas();
 
 		this.markDirty();
 		this.renderSheet();
@@ -519,15 +629,27 @@ export class SpreadsheetView extends FileView {
 
 	// ── Edit Mode Toggle ─────────────────────────────────────────────────────
 
+	private evaluateAllFormulas(): void {
+		if (!this.workbook || !this.xlsx) return;
+		const sheetName = this.workbook.SheetNames[this.activeSheet];
+		if (!sheetName) return;
+		const sheet = this.workbook.Sheets[sheetName];
+		if (!sheet) return;
+		evaluateSheet(sheet, this.xlsx.utils, sheetGetRef(sheet));
+	}
+
 	private toggleEditMode(): void {
 		this.editMode = !this.editMode;
 		if (!this.editToggleBtn) return;
-		setIcon(this.editToggleBtn, this.editMode ? 'eye' : 'pencil');
-		setTooltip(this.editToggleBtn, this.editMode ? 'Switch to view mode' : 'Switch to edit mode');
-		this.editToggleBtn.classList.toggle('is-active', this.editMode);
+		setIcon(this.editToggleBtn, this.editMode ? "eye" : "pencil");
+		setTooltip(
+			this.editToggleBtn,
+			this.editMode ? "Switch to view mode" : "Switch to edit mode",
+		);
+		this.editToggleBtn.classList.toggle("is-active", this.editMode);
 
 		// Show/hide edit-only toolbar buttons
-		const display = this.editMode ? '' : 'none';
+		const display = this.editMode ? "" : "none";
 		if (this.saveBtn) this.saveBtn.style.display = display;
 		if (this.undoBtn) this.undoBtn.style.display = display;
 		if (this.addRowBtn) this.addRowBtn.style.display = display;
@@ -548,7 +670,7 @@ export class SpreadsheetView extends FileView {
 		const sheet = this.workbook.Sheets[sheetName];
 		if (!sheet) return;
 
-		const ref = sheetGetRef(sheet) ?? 'A1:A1';
+		const ref = sheetGetRef(sheet) ?? "A1:A1";
 		const range = this.xlsx.utils.decode_range(ref);
 		range.e.r += 1;
 		sheetSetRef(sheet, this.xlsx.utils.encode_range(range));
@@ -556,7 +678,7 @@ export class SpreadsheetView extends FileView {
 		this.markDirty();
 		this.renderSheet();
 		this.updateInfo();
-		new Notice('Row added', 1500);
+		new Notice("Row added", 1500);
 	}
 
 	private addColumn(): void {
@@ -566,7 +688,7 @@ export class SpreadsheetView extends FileView {
 		const sheet = this.workbook.Sheets[sheetName];
 		if (!sheet) return;
 
-		const ref = sheetGetRef(sheet) ?? 'A1:A1';
+		const ref = sheetGetRef(sheet) ?? "A1:A1";
 		const range = this.xlsx.utils.decode_range(ref);
 		range.e.c += 1;
 		sheetSetRef(sheet, this.xlsx.utils.encode_range(range));
@@ -574,7 +696,7 @@ export class SpreadsheetView extends FileView {
 		this.markDirty();
 		this.renderSheet();
 		this.updateInfo();
-		new Notice('Column added', 1500);
+		new Notice("Column added", 1500);
 	}
 
 	// ── Insert / Delete Row ───────────────────────────────────────────────────
@@ -586,7 +708,7 @@ export class SpreadsheetView extends FileView {
 		const sheet = this.workbook.Sheets[sheetName];
 		if (!sheet) return;
 
-		const ref = sheetGetRef(sheet) ?? 'A1:A1';
+		const ref = sheetGetRef(sheet) ?? "A1:A1";
 		const range = this.xlsx.utils.decode_range(ref);
 		const colCount = range.e.c + 1;
 
@@ -624,7 +746,7 @@ export class SpreadsheetView extends FileView {
 		const sheet = this.workbook.Sheets[sheetName];
 		if (!sheet) return;
 
-		const ref = sheetGetRef(sheet) ?? 'A1:A1';
+		const ref = sheetGetRef(sheet) ?? "A1:A1";
 		const range = this.xlsx.utils.decode_range(ref);
 		if (range.e.r <= 0) return; // Don't delete the last row
 		const colCount = range.e.c + 1;
@@ -668,7 +790,7 @@ export class SpreadsheetView extends FileView {
 		const sheet = this.workbook.Sheets[sheetName];
 		if (!sheet) return;
 
-		const ref = sheetGetRef(sheet) ?? 'A1:A1';
+		const ref = sheetGetRef(sheet) ?? "A1:A1";
 		const range = this.xlsx.utils.decode_range(ref);
 		const rowCount = range.e.r + 1;
 
@@ -706,7 +828,7 @@ export class SpreadsheetView extends FileView {
 		const sheet = this.workbook.Sheets[sheetName];
 		if (!sheet) return;
 
-		const ref = sheetGetRef(sheet) ?? 'A1:A1';
+		const ref = sheetGetRef(sheet) ?? "A1:A1";
 		const range = this.xlsx.utils.decode_range(ref);
 		if (range.e.c <= 0) return; // Don't delete the last column
 		const rowCount = range.e.r + 1;
@@ -743,35 +865,55 @@ export class SpreadsheetView extends FileView {
 
 	// ── Context Menus ─────────────────────────────────────────────────────────
 
-	private showRowContextMenu(e: MouseEvent, row: number, rowCount: number): void {
+	private showRowContextMenu(
+		e: MouseEvent,
+		row: number,
+		rowCount: number,
+	): void {
 		const menu = new Menu();
-		menu.addItem(item => {
-			item.setTitle('Insert row above').setIcon('arrow-up').onClick(() => this.insertRowAt(row));
+		menu.addItem((item) => {
+			item.setTitle("Insert row above")
+				.setIcon("arrow-up")
+				.onClick(() => this.insertRowAt(row));
 		});
-		menu.addItem(item => {
-			item.setTitle('Insert row below').setIcon('arrow-down').onClick(() => this.insertRowAt(row + 1));
+		menu.addItem((item) => {
+			item.setTitle("Insert row below")
+				.setIcon("arrow-down")
+				.onClick(() => this.insertRowAt(row + 1));
 		});
 		if (rowCount > 1) {
 			menu.addSeparator();
-			menu.addItem(item => {
-				item.setTitle('Delete row').setIcon('trash-2').onClick(() => this.deleteRowAt(row));
+			menu.addItem((item) => {
+				item.setTitle("Delete row")
+					.setIcon("trash-2")
+					.onClick(() => this.deleteRowAt(row));
 			});
 		}
 		menu.showAtMouseEvent(e);
 	}
 
-	private showColumnContextMenu(e: MouseEvent, col: number, colCount: number): void {
+	private showColumnContextMenu(
+		e: MouseEvent,
+		col: number,
+		colCount: number,
+	): void {
 		const menu = new Menu();
-		menu.addItem(item => {
-			item.setTitle('Insert column left').setIcon('arrow-left').onClick(() => this.insertColumnAt(col));
+		menu.addItem((item) => {
+			item.setTitle("Insert column left")
+				.setIcon("arrow-left")
+				.onClick(() => this.insertColumnAt(col));
 		});
-		menu.addItem(item => {
-			item.setTitle('Insert column right').setIcon('arrow-right').onClick(() => this.insertColumnAt(col + 1));
+		menu.addItem((item) => {
+			item.setTitle("Insert column right")
+				.setIcon("arrow-right")
+				.onClick(() => this.insertColumnAt(col + 1));
 		});
 		if (colCount > 1) {
 			menu.addSeparator();
-			menu.addItem(item => {
-				item.setTitle('Delete column').setIcon('trash-2').onClick(() => this.deleteColumnAt(col));
+			menu.addItem((item) => {
+				item.setTitle("Delete column")
+					.setIcon("trash-2")
+					.onClick(() => this.deleteColumnAt(col));
 			});
 		}
 		menu.showAtMouseEvent(e);
@@ -781,14 +923,15 @@ export class SpreadsheetView extends FileView {
 
 	private markDirty(): void {
 		this.isDirty = true;
-		this.saveBtn?.classList.add('is-dirty');
+		this.saveBtn?.classList.add("is-dirty");
 		this.setDirty(true);
 	}
 
 	private setDirty(dirty: boolean): void {
 		this.isDirty = dirty;
-		if (this.dirtyIndicator) this.dirtyIndicator.style.display = dirty ? '' : 'none';
-		if (!dirty) this.saveBtn?.classList.remove('is-dirty');
+		if (this.dirtyIndicator)
+			this.dirtyIndicator.style.display = dirty ? "" : "none";
+		if (!dirty) this.saveBtn?.classList.remove("is-dirty");
 	}
 
 	private async saveFile(): Promise<void> {
@@ -798,20 +941,24 @@ export class SpreadsheetView extends FileView {
 			const confirmed = await confirmModal(
 				this.app,
 				`Overwrite "${this.currentFile.name}"?`,
-				'This will replace the original file with the current spreadsheet data.'
+				"This will replace the original file with the current spreadsheet data.",
 			);
 			if (!confirmed) return;
 		}
 
-		const bookType = this.currentFile.extension === 'csv' ? 'csv' : 'xlsx';
+		const bookType = this.currentFile.extension === "csv" ? "csv" : "xlsx";
 		try {
-			const out = this.xlsx.write(this.workbook, { type: 'array', bookType });
-			const ab = out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer;
+			// Use type:'binary' to avoid readSlice errors in SheetJS CFB writer
+			const out = this.xlsx.write(this.workbook, {
+				type: "binary",
+				bookType,
+			}) as string;
+			const ab = binaryStringToArrayBuffer(out);
 			await this.app.vault.modifyBinary(this.currentFile, ab);
 			// Update saved snapshot
 			this.savedData = ab.slice(0);
 			this.setDirty(false);
-			new Notice('Saved', 2000);
+			new Notice("Saved", 2000);
 		} catch (err) {
 			new Notice(`Save failed: ${String(err)}`);
 		}
@@ -820,14 +967,16 @@ export class SpreadsheetView extends FileView {
 	private revertToSaved(): void {
 		if (!this.savedData || !this.xlsx) return;
 		try {
-			this.workbook = this.xlsx.read(new Uint8Array(this.savedData), { type: 'array' });
+			this.workbook = this.xlsx.read(new Uint8Array(this.savedData), {
+				type: "array",
+			});
 			this.setDirty(false);
 			this.selRow = -1;
 			this.selCol = -1;
 			this.renderSheet();
 			this.updateInfo();
 			this.refreshFormulaBar();
-			new Notice('Reverted to last save', 1500);
+			new Notice("Reverted to last save", 1500);
 		} catch (err) {
 			new Notice(`Revert failed: ${String(err)}`);
 		}
@@ -836,11 +985,20 @@ export class SpreadsheetView extends FileView {
 	private updateInfo(): void {
 		if (!this.infoEl || !this.workbook || !this.xlsx) return;
 		const sheetName = this.workbook.SheetNames[this.activeSheet];
-		if (!sheetName) { this.infoEl.textContent = '—'; return; }
+		if (!sheetName) {
+			this.infoEl.textContent = "—";
+			return;
+		}
 		const sheet = this.workbook.Sheets[sheetName];
-		if (!sheet) { this.infoEl.textContent = '—'; return; }
+		if (!sheet) {
+			this.infoEl.textContent = "—";
+			return;
+		}
 		const ref = sheetGetRef(sheet);
-		if (!ref) { this.infoEl.textContent = '0 rows'; return; }
+		if (!ref) {
+			this.infoEl.textContent = "0 rows";
+			return;
+		}
 		const range = this.xlsx.utils.decode_range(ref);
 		this.infoEl.textContent = `${range.e.r + 1} × ${range.e.c + 1}`;
 	}
@@ -848,8 +1006,12 @@ export class SpreadsheetView extends FileView {
 
 // ── Confirm modal ─────────────────────────────────────────────────────────────
 
-function confirmModal(app: App, title: string, message: string): Promise<boolean> {
-	return new Promise(resolve => {
+function confirmModal(
+	app: App,
+	title: string,
+	message: string,
+): Promise<boolean> {
+	return new Promise((resolve) => {
 		const modal = new ConfirmModal(app, title, message, resolve);
 		modal.open();
 	});
@@ -860,7 +1022,7 @@ class ConfirmModal extends Modal {
 		app: App,
 		private titleText: string,
 		private message: string,
-		private resolve: (v: boolean) => void
+		private resolve: (v: boolean) => void,
 	) {
 		super(app);
 	}
@@ -868,27 +1030,50 @@ class ConfirmModal extends Modal {
 	onOpen(): void {
 		this.setTitle(this.titleText);
 		const { contentEl } = this;
-		contentEl.createEl('p', { text: this.message });
-		const btnRow = contentEl.createEl('div', { cls: 'modal-button-container' });
-		btnRow.createEl('button', { text: 'Cancel' })
-			.addEventListener('click', () => { this.resolve(false); this.close(); });
-		const overwriteBtn = btnRow.createEl('button', { text: 'Overwrite', cls: 'mod-cta' });
-		overwriteBtn.style.cssText = 'background: var(--color-red); border-color: var(--color-red);';
-		overwriteBtn.addEventListener('click', () => { this.resolve(true); this.close(); });
+		contentEl.createEl("p", { text: this.message });
+		const btnRow = contentEl.createEl("div", {
+			cls: "modal-button-container",
+		});
+		btnRow
+			.createEl("button", { text: "Cancel" })
+			.addEventListener("click", () => {
+				this.resolve(false);
+				this.close();
+			});
+		const overwriteBtn = btnRow.createEl("button", {
+			text: "Overwrite",
+			cls: "mod-cta",
+		});
+		overwriteBtn.style.cssText =
+			"background: var(--color-red); border-color: var(--color-red);";
+		overwriteBtn.addEventListener("click", () => {
+			this.resolve(true);
+			this.close();
+		});
 	}
 
-	onClose(): void { this.contentEl.empty(); }
+	onClose(): void {
+		this.contentEl.empty();
+	}
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /** Convert 0-based column index to spreadsheet letter (A, B, …, Z, AA, AB…). */
 function colLetter(index: number): string {
-	let s = '';
+	let s = "";
 	let n = index;
 	while (n >= 0) {
 		s = String.fromCharCode((n % 26) + 65) + s;
 		n = Math.floor(n / 26) - 1;
 	}
 	return s;
+}
+
+/** Convert a SheetJS binary string to an ArrayBuffer (avoids CFB readSlice bug). */
+function binaryStringToArrayBuffer(bin: string): ArrayBuffer {
+	const buf = new ArrayBuffer(bin.length);
+	const view = new Uint8Array(buf);
+	for (let i = 0; i < bin.length; i++) view[i] = bin.charCodeAt(i) & 0xff;
+	return buf;
 }

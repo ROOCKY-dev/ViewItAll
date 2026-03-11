@@ -1,6 +1,6 @@
 {
 	"name": "viewitall-md",
-	"version": "1.4.1",
+	"version": "1.4.2",
 	"description": "View and edit MS Word (.docx) and PDF files directly inside Obsidian.",
 	"main": "main.js",
 	"scripts": {
@@ -31,12 +31,18 @@
 		"typescript-eslint": "8.35.1"
 	},
 	"dependencies": {
+		"@kandiforge/pptx-renderer": "^3.3.0",
+		"@mui/icons-material": "^5.18.0",
+		"@types/react": "^19.2.14",
+		"@types/react-dom": "^19.2.3",
 		"html-to-docx": "^1.8.0",
 		"jszip": "^3.10.1",
 		"mammoth": "^1.11.0",
 		"obsidian": "latest",
 		"pdf-lib": "^1.17.1",
 		"pdfjs-dist": "^3.11.174",
+		"react": "^19.2.4",
+		"react-dom": "^19.2.4",
 		"xlsx": "^0.18.5"
 	}
 }

@@ -1,10 +1,10 @@
-export const VIEW_TYPE_DOCX        = 'viewitall-docx';
-export const VIEW_TYPE_PDF         = 'viewitall-pdf';
-export const VIEW_TYPE_SPREADSHEET = 'viewitall-spreadsheet';
-export const VIEW_TYPE_PPTX        = 'viewitall-pptx';
+export const VIEW_TYPE_DOCX = "viewitall-docx";
+export const VIEW_TYPE_PDF = "viewitall-pdf";
+export const VIEW_TYPE_SPREADSHEET = "viewitall-spreadsheet";
+export const VIEW_TYPE_PPTX = "viewitall-pptx";
 
 export interface AnnotationPath {
-	tool: 'pen' | 'highlighter' | 'eraser';
+	tool: "pen" | "highlighter" | "eraser";
 	color: string;
 	width: number;
 	opacity?: number;

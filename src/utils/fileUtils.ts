@@ -1,4 +1,4 @@
-import { App, TFile } from 'obsidian';
+import { App, TFile } from "obsidian";
 
 /** Returns the app:// resource URL Obsidian/Electron uses to serve vault files. */
 export function getResourcePath(app: App, file: TFile): string {
