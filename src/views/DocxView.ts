@@ -149,7 +149,7 @@ export class DocxView extends FileView {
 
 		try {
 			const buffer = await saveHtmlAsDocx(this.contentDiv.innerHTML);
-			await this.app.vault.adapter.writeBinary(this.currentFile.path, buffer);
+			await this.app.vault.modifyBinary(this.currentFile, buffer);
 			this.setDirty(false);
 			new Notice(`✅ Saved "${this.currentFile.name}"`);
 		} catch (err) {

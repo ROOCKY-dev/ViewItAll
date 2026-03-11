@@ -25,10 +25,16 @@ export async function readDocxAsHtml(
  * Note: Complex formatting (merged table cells, custom styles) may be simplified.
  */
 export async function saveHtmlAsDocx(html: string): Promise<ArrayBuffer> {
-	const blob: Blob = await HtmlToDocx(html, undefined, {
+	// HtmlToDocx returns Blob in pure-browser contexts, Buffer in Electron/Node
+	const result = await HtmlToDocx(html, undefined, {
 		table: { row: { cantSplit: true } },
 		footer: false,
 		pageNumber: false,
 	});
-	return await blob.arrayBuffer();
+	if (result instanceof Blob) {
+		return result.arrayBuffer();
+	}
+	// Node.js Buffer → ArrayBuffer (zero-copy slice)
+	const buf = result as Buffer;
+	return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
 }
