@@ -1,0 +1,418 @@
+# ============================================================
+#  ViewItAll-md — .Agent/requirements.toon
+#  ALL REQUIREMENTS  •  achieved + planned  •  priority order
+# ============================================================
+#
+#  STATUS values:  done | in-progress | planned | blocked | cancelled
+#  PRIORITY:       1 = critical  2 = high  3 = medium  4 = low  5 = future
+#  SPRINT:         which sprint delivered (or will deliver) this
+#
+# ============================================================
+
+[meta]
+format       = "custom-toml-like/1.0"
+last_updated = "2026-03-11"
+version      = "1.4.1"
+
+
+# ══════════════════════════════════════════════════════════════
+#  CORE PLATFORM
+# ══════════════════════════════════════════════════════════════
+
+[[req]]
+id       = "CORE-01"
+title    = "Register custom FileView for .pdf files"
+status   = "done"
+priority = 1
+sprint   = 1
+notes    = "PdfView extends FileView; registered in main.ts onload()"
+
+[[req]]
+id       = "CORE-02"
+title    = "Register custom FileView for .docx files"
+status   = "done"
+priority = 1
+sprint   = 1
+notes    = "DocxView extends FileView; registered in main.ts onload()"
+
+[[req]]
+id       = "CORE-03"
+title    = "Plugin settings tab with all configurable options"
+status   = "done"
+priority = 1
+sprint   = 4
+notes    = "Full PluginSettings interface; sections: DOCX, PDF General, Annotation Tools, Snap, Keyboard Shortcuts"
+
+[[req]]
+id       = "CORE-04"
+title    = "No hardcoded keyboard shortcuts or defaults"
+status   = "done"
+priority = 1
+sprint   = 4
+notes    = "All shortcuts and defaults read from settings at runtime"
+
+[[req]]
+id       = "CORE-05"
+title    = "Semantic versioning with auto-bump workflow"
+status   = "done"
+priority = 2
+sprint   = 1
+notes    = "npm version patch/minor/major; version-bump.mjs syncs manifest.json and versions.json"
+
+[[req]]
+id       = "CORE-06"
+title    = "Toggle file-type support per type (enable/disable per extension)"
+status   = "planned"
+priority = 2
+sprint   = 6
+notes    = "Settings toggles: enablePdf, enableDocx, enableXlsx, enablePptx, enableEpub, etc."
+
+
+# ══════════════════════════════════════════════════════════════
+#  PDF VIEWER
+# ══════════════════════════════════════════════════════════════
+
+[[req]]
+id       = "PDF-01"
+title    = "Render PDF pages using pdf.js with lazy loading"
+status   = "done"
+priority = 1
+sprint   = 1
+notes    = "IntersectionObserver triggers page render; 3-canvas layer stack per page"
+
+[[req]]
+id       = "PDF-02"
+title    = "Pinch-to-zoom / Ctrl+wheel zoom with debounced re-render"
+status   = "done"
+priority = 1
+sprint   = 1
+notes    = "ZOOM_STEPS array; viewportCenterFrac() preserves scroll position"
+
+[[req]]
+id       = "PDF-03"
+title    = "Freehand pen annotation on PDF"
+status   = "done"
+priority = 1
+sprint   = 1
+notes    = "Stroke recorded as normalised 0-1 coords; drawn on annotCanvas (z-index 2)"
+
+[[req]]
+id       = "PDF-04"
+title    = "Highlighter annotation on PDF"
+status   = "done"
+priority = 1
+sprint   = 1
+notes    = "Separate opacity setting; compositeOperation = 'multiply'"
+
+[[req]]
+id       = "PDF-05"
+title    = "Eraser tool for annotations"
+status   = "done"
+priority = 1
+sprint   = 1
+notes    = "Erases by proximity radius from stored stroke points"
+
+[[req]]
+id       = "PDF-06"
+title    = "Sticky text notes overlaid on PDF pages"
+status   = "done"
+priority = 1
+sprint   = 3
+notes    = "Draggable, resizable, colour-customisable; stored in annotations.json sidecar"
+
+[[req]]
+id       = "PDF-07"
+title    = "Persist annotations to sidecar .annotations.json file"
+status   = "done"
+priority = 1
+sprint   = 1
+notes    = "loadAnnotations / saveAnnotations utils; vault.modify for proper event firing"
+
+[[req]]
+id       = "PDF-08"
+title    = "Export annotated PDF with embedded strokes"
+status   = "done"
+priority = 2
+sprint   = 3
+notes    = "pdf-lib draws strokes onto pages; saved via vault.modifyBinary"
+
+[[req]]
+id       = "PDF-09"
+title    = "Full-text search within PDF with match highlighting"
+status   = "done"
+priority = 2
+sprint   = 2
+notes    = "PdfSearchController; searchCanvas overlay; prev/next navigation"
+
+[[req]]
+id       = "PDF-10"
+title    = "Table of contents sidebar from PDF outline"
+status   = "done"
+priority = 2
+sprint   = 3
+notes    = "Async pdfDoc.getOutline(); collapsible tree; scrollToPage on click"
+
+[[req]]
+id       = "PDF-11"
+title    = "Configurable default zoom level"
+status   = "done"
+priority = 2
+sprint   = 4
+notes    = "pdfDefaultZoom setting; reset zoom click returns to this value"
+
+[[req]]
+id       = "PDF-12"
+title    = "Constrained stroke snapping (H / V / 45°)"
+status   = "done"
+priority = 2
+sprint   = "3b"
+notes    = "Hold snapActivateKey (default Alt) to activate; Alt+S to cycle direction"
+
+[[req]]
+id       = "PDF-13"
+title    = "Configurable snap key and cycle key"
+status   = "done"
+priority = 2
+sprint   = 4
+notes    = "snapActivateKey + keySnapCycle in settings; document-level key handler with active-view guard"
+
+[[req]]
+id       = "PDF-14"
+title    = "Undo / redo for pen strokes"
+status   = "done"
+priority = 2
+sprint   = 2
+notes    = "undoStack / redoStack per page; Ctrl+Z / Ctrl+Shift+Z"
+
+[[req]]
+id       = "PDF-15"
+title    = "Configurable toolbar position (top / bottom)"
+status   = "done"
+priority = 3
+sprint   = 2
+notes    = "docxToolbarPosition + pdfToolbarPosition in settings"
+
+[[req]]
+id       = "PDF-16"
+title    = "Page jump input (click page indicator → type number)"
+status   = "done"
+priority = 3
+sprint   = 2
+notes    = "Inline input replaces indicator; Enter to jump, Escape to cancel"
+
+[[req]]
+id       = "PDF-17"
+title    = "Color presets per tool (pen vs highlighter)"
+status   = "done"
+priority = 3
+sprint   = 1
+notes    = "PEN_PRESETS and HIGHLIGHT_PRESETS arrays; custom colour via colour input"
+
+[[req]]
+id       = "PDF-18"
+title    = "Colour & size in floating popover (not inline toolbar)"
+status   = "done"
+priority = 3
+sprint   = 5
+notes    = "Single coloured dot button → popover with swatches + sliders; dismissed on outside click"
+
+
+# ══════════════════════════════════════════════════════════════
+#  DOCX VIEWER
+# ══════════════════════════════════════════════════════════════
+
+[[req]]
+id       = "DOCX-01"
+title    = "Render .docx as styled HTML using mammoth.js"
+status   = "done"
+priority = 1
+sprint   = 1
+notes    = "mammoth.convertToHtml; warnings shown in collapsible section"
+
+[[req]]
+id       = "DOCX-02"
+title    = "Edit mode — contentEditable HTML with undo/redo"
+status   = "done"
+priority = 1
+sprint   = 1
+notes    = "document.execCommand('undo'/'redo'); dirty dot indicator"
+
+[[req]]
+id       = "DOCX-03"
+title    = "Save edited content back to .docx"
+status   = "done"
+priority = 1
+sprint   = 1
+notes    = "html-to-docx library; Buffer→ArrayBuffer fix for Electron; vault.modifyBinary"
+
+[[req]]
+id       = "DOCX-04"
+title    = "Confirm-on-save modal to prevent accidental overwrites"
+status   = "done"
+priority = 2
+sprint   = 1
+notes    = "confirmOnSave setting; ConfirmModal uses setTitle() + modal-button-container"
+
+[[req]]
+id       = "DOCX-05"
+title    = "Configurable default edit mode (open in edit or view)"
+status   = "done"
+priority = 3
+sprint   = 4
+notes    = "docxDefaultEditMode boolean setting"
+
+
+# ══════════════════════════════════════════════════════════════
+#  UI / UX
+# ══════════════════════════════════════════════════════════════
+
+[[req]]
+id       = "UX-01"
+title    = "Native Obsidian look — zero plugin vibe"
+status   = "done"
+priority = 1
+sprint   = 5
+notes    = "setIcon, setTooltip, clickable-icon, CSS vars only, addAction() for secondary actions"
+
+[[req]]
+id       = "UX-02"
+title    = "All buttons use Lucide icons via setIcon()"
+status   = "done"
+priority = 1
+sprint   = 5
+notes    = "No emoji buttons anywhere in the UI"
+
+[[req]]
+id       = "UX-03"
+title    = "Styles use only Obsidian CSS variables"
+status   = "done"
+priority = 1
+sprint   = 5
+notes    = "No hardcoded colours or px values that conflict with themes"
+
+[[req]]
+id       = "UX-04"
+title    = "Text note visual redesign — card with coloured accent"
+status   = "done"
+priority = 2
+sprint   = 5
+notes    = "Neutral card bg, 4px top border in note colour, header fades in on hover, resizable"
+
+
+# ══════════════════════════════════════════════════════════════
+#  FUTURE FILE TYPES  (planned — not yet implemented)
+# ══════════════════════════════════════════════════════════════
+
+[[req]]
+id       = "FT-01"
+title    = "Spreadsheet viewer for .xlsx and .csv"
+status   = "planned"
+priority = 2
+sprint   = 6
+notes    = """
+  Library: SheetJS (xlsx) — browser-compatible, no native deps.
+  Render: SheetJS → 2D array → HTML table with frozen header row.
+  .csv: parse manually or via SheetJS read().
+  Features: column resize, sort by column, row count indicator.
+  Settings: maxRowsToRender (default 2000 for performance).
+  Toggle: enableXlsx + enableCsv in settings.
+"""
+
+[[req]]
+id       = "FT-02"
+title    = "Presentation viewer for .pptx"
+status   = "planned"
+priority = 2
+sprint   = 7
+notes    = """
+  Library: pptxgenjs can READ pptx (use the parse side), or use
+  officeparser / pptx2html for rendering.
+  Render: each slide as a scaled canvas or positioned HTML div.
+  Navigation: prev/next slide buttons + slide thumbnail strip.
+  Features: slide count, full-screen mode.
+  Toggle: enablePptx in settings.
+  Complexity: High — consider a 2-phase approach:
+    Phase 1: text-only extraction view
+    Phase 2: visual slide rendering
+"""
+
+[[req]]
+id       = "FT-03"
+title    = "eBook viewer for .epub"
+status   = "planned"
+priority = 3
+sprint   = 8
+notes    = """
+  Library: epub.js (epubjs) — well-maintained, browser-ready.
+  Render: paginated or scrolling view inside an iframe/div.
+  Features: chapter navigation (TOC), font size, reading position memory.
+  Toggle: enableEpub in settings.
+"""
+
+[[req]]
+id       = "FT-04"
+title    = "Media player for .mp4 / .webm / .mp3 / .ogg / .wav"
+status   = "planned"
+priority = 3
+sprint   = 6
+notes    = """
+  Library: None needed — native HTML5 <video> and <audio> elements.
+  Render: styled HTML5 player with Obsidian-themed controls.
+  Note: Obsidian already opens some media types; only override if
+  the native handling is lacking (e.g., no loop/speed controls).
+  Features: playback speed, loop toggle, volume memory.
+  Toggle: enableMedia in settings.
+"""
+
+[[req]]
+id       = "FT-05"
+title    = "Code / data file viewer for .json / .yaml / .xml / .toml"
+status   = "planned"
+priority = 3
+sprint   = 6
+notes    = """
+  Library: highlight.js or Prism (already used by Obsidian internally).
+  Render: syntax-highlighted read-only code block.
+  For JSON/XML: collapsible tree view option.
+  Toggle: enableCodeView in settings.
+  Note: these files can already be opened as text in Obsidian — only
+  add if we can provide meaningfully better rendering (e.g. tree view).
+"""
+
+[[req]]
+id       = "FT-06"
+title    = "Archive inspector for .zip"
+status   = "planned"
+priority = 4
+sprint   = 9
+notes    = """
+  Library: JSZip — browser-compatible.
+  Render: file tree with size, type, and date columns.
+  Features: preview individual text files inside the archive.
+  Toggle: enableZip in settings.
+"""
+
+[[req]]
+id       = "FT-07"
+title    = "3D model viewer for .glb / .gltf"
+status   = "planned"
+priority = 5
+sprint   = "future"
+notes    = """
+  Library: Three.js or Babylon.js — large dependency (~500kb min).
+  Render: WebGL canvas with orbit controls (rotate, zoom, pan).
+  Only add if bundle size impact is acceptable (lazy-load the lib).
+  Toggle: enable3d in settings.
+"""
+
+[[req]]
+id       = "FT-08"
+title    = "Rich text viewer for .odt / .rtf"
+status   = "planned"
+priority = 4
+sprint   = "future"
+notes    = """
+  .odt: similar mammoth approach; may require a different library.
+  .rtf: rtf.js or rtfparser library.
+  Toggle: enableOdt / enableRtf in settings.
+"""

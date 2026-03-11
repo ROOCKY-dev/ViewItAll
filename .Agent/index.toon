@@ -1,0 +1,116 @@
+# ============================================================
+#  ViewItAll-md — .Agent/index.toon
+#  MASTER INDEX + BOOTSTRAP PROMPT
+#  Read this file FIRST at the start of every new session.
+# ============================================================
+
+[meta]
+format        = "custom-toml-like/1.0"
+format_note   = """
+  NOTE: The .toon extension was chosen by the engineer.
+  The official TOON format (github.com/toon-format/toon) is a
+  JSON serialization format for LLM token efficiency.
+  These files use a TOML-inspired custom structured text format —
+  human-readable and LLM-parseable, but NOT the official TOON spec.
+  Treat them as TOML documents with multiline string support.
+"""
+project       = "ViewItAll-md"
+description   = "Obsidian community plugin — native viewer for non-markdown files"
+repo_root     = ".obsidian/plugins/ViewItAll-md"
+agent_dir     = ".Agent/"
+last_updated  = "2026-03-11"
+
+
+# ──────────────────────────────────────────────────────────────
+#  FILE MAP — what each governance file does
+# ──────────────────────────────────────────────────────────────
+
+[files]
+
+index.toon = """
+  THIS file. Read first every session.
+  Contains the master bootstrap prompt and file directory.
+"""
+
+requirements.toon = """
+  Full list of all feature requirements — achieved and planned.
+  Each entry has: id, title, status, priority, sprint, notes.
+  Update this whenever a requirement is completed or added.
+"""
+
+constraints.toon = """
+  Hard rules the agent MUST follow.
+  Quality gates, performance budgets, tech constraints,
+  how to use /docs, coding standards, banned patterns.
+  Never violate a constraint without explicit engineer approval.
+"""
+
+userinterface_userexperience.md = """
+  All UI/UX design rules, component guidelines, Obsidian-native
+  feel requirements, token usage, interaction patterns.
+  Consult before adding ANY new UI element.
+"""
+
+projectplan.md = """
+  Living project history + roadmap.
+  MUST be updated after every commit/patch/push.
+  Sections: Overview, Sprint History, Current State, Roadmap.
+"""
+
+workflow.json = """
+  Machine-readable agent operating procedure.
+  How to handle requests, versioning, git, settings, testing.
+  The agent MUST follow this workflow on every task.
+"""
+
+agentmemo.md = """
+  Long-term memory for all agents across sessions.
+  Each agent adds their own section with observations about
+  the engineer's preferences, style, and implicit requirements.
+  Read ALL prior sections before starting work.
+"""
+
+
+# ──────────────────────────────────────────────────────────────
+#  BOOTSTRAP PROMPT — paste this into context at session start
+# ──────────────────────────────────────────────────────────────
+
+[bootstrap]
+prompt = """
+You are continuing work on ViewItAll-md, an Obsidian community plugin.
+
+MANDATORY session start sequence:
+1. Read  .Agent/index.toon          (this file — already done)
+2. Read  .Agent/agentmemo.md        (learn engineer preferences from prior agents)
+3. Read  .Agent/projectplan.md      (understand current state and history)
+4. Read  .Agent/requirements.toon   (understand what is done and what is planned)
+5. Read  .Agent/constraints.toon    (internalize all hard rules BEFORE writing code)
+6. Read  .Agent/userinterface_userexperience.md (internalize UI/UX rules)
+7. Read  .Agent/workflow.json       (understand how to handle requests)
+8. Skim  src/                       (confirm file structure matches what you expect)
+9. Run   npm run build              (confirm baseline builds cleanly)
+
+Only after completing steps 1-9 are you ready to receive and execute tasks.
+
+MANDATORY session end:
+- Update .Agent/projectplan.md with what was done this session
+- Add your entry to .Agent/agentmemo.md
+- Ensure all commits follow the workflow.json versioning rules
+"""
+
+
+# ──────────────────────────────────────────────────────────────
+#  QUICK REFERENCE
+# ──────────────────────────────────────────────────────────────
+
+[quick_ref]
+build          = "npm run build"
+dev_watch      = "npm run dev"
+version_patch  = "npm version patch --no-git-tag-version"
+version_minor  = "npm version minor --no-git-tag-version"
+version_major  = "npm version major --no-git-tag-version"
+docs_dir       = "docs/"        # Official Obsidian API docs live here — READ before using any API
+entry_point    = "src/main.ts"
+styles         = "styles.css"
+commit_style   = "Conventional Commits (feat/fix/refactor/docs/chore)"
+commit_trailer = "Assisted by GitHub Copilot  — NO Co-authored-by trailer"

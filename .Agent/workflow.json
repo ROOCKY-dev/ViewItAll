@@ -1,0 +1,126 @@
+{
+  "$schema": "ViewItAll-md Agent Workflow v1.0",
+  "description": "Operating procedure for all AI agents working on ViewItAll-md. Follow this workflow on every task.",
+
+  "session_start": {
+    "order": "MANDATORY — execute in sequence before any task",
+    "steps": [
+      "1. Read .Agent/index.toon",
+      "2. Read .Agent/agentmemo.md — learn engineer preferences",
+      "3. Read .Agent/projectplan.md — understand current state",
+      "4. Read .Agent/requirements.toon — know what is done vs planned",
+      "5. Read .Agent/constraints.toon — internalize all hard rules",
+      "6. Read .Agent/userinterface_userexperience.md — internalize design rules",
+      "7. Skim src/ tree to confirm structure",
+      "8. Run npm run build — confirm clean baseline",
+      "9. Only now: accept and begin the task"
+    ]
+  },
+
+  "session_end": {
+    "order": "MANDATORY — execute before closing session",
+    "steps": [
+      "1. Update .Agent/projectplan.md with what was done",
+      "2. Update .Agent/requirements.toon status fields for any completed reqs",
+      "3. Add your entry to .Agent/agentmemo.md",
+      "4. Ensure final build passes: npm run build",
+      "5. Confirm all committed files follow versioning rules"
+    ]
+  },
+
+  "request_handling": {
+    "on_new_request": [
+      "Parse intent: is this a bug fix, feature, refactor, or docs task?",
+      "Check requirements.toon: does this match an existing planned req?",
+      "Check constraints.toon: are there rules that apply?",
+      "Check userinterface_userexperience.md if any UI is involved",
+      "If scope is unclear: ask ONE focused clarifying question before coding",
+      "Write a brief plan before touching files"
+    ],
+    "ambiguity_resolution": "Ask the engineer ONE question per ambiguity. Never bundle multiple questions. Prefer multiple-choice options when possible.",
+    "when_stuck": [
+      "Re-read /docs/ for relevant Obsidian API",
+      "Read existing code for established patterns",
+      "Try the simplest approach first",
+      "Surface the blocker clearly with options if still stuck"
+    ]
+  },
+
+  "versioning": {
+    "scheme": "Semantic Versioning MAJOR.MINOR.PATCH",
+    "rules": {
+      "patch": "Bug fixes, style tweaks, text changes → npm version patch --no-git-tag-version",
+      "minor": "New features, new file type support, new settings → npm version minor --no-git-tag-version",
+      "major": "Breaking changes to annotation format or settings schema → npm version major --no-git-tag-version"
+    },
+    "sync_check": "After bump: verify package.json, manifest.json, versions.json all show the same version",
+    "when_to_bump": "Bump version BEFORE the final commit of each sprint or feature batch. Patch fixes can be grouped into one bump."
+  },
+
+  "git": {
+    "commit_format": {
+      "structure": "type(scope): short description (vX.Y.Z)\n\n- bullet detail\n- bullet detail\n\nAssisted by GitHub Copilot",
+      "types": ["feat", "fix", "refactor", "style", "docs", "chore", "perf"],
+      "examples": {
+        "feature": "feat(pdf): add spreadsheet viewer for xlsx/csv (v1.5.0)",
+        "bugfix": "fix(docx): correct Buffer→ArrayBuffer conversion for Electron (v1.1.1)",
+        "style": "style(notes): redesign PDF note overlay appearance (v1.4.1)"
+      }
+    },
+    "trailer_rule": "NEVER add 'Co-authored-by:' trailer. Write 'Assisted by GitHub Copilot' in the commit body only.",
+    "never_commit": ["main.js", "node_modules/", "*.js.map", ".DS_Store"],
+    "branch_strategy": "All work on main branch unless engineer explicitly requests a feature branch"
+  },
+
+  "build_and_test": {
+    "build_command": "npm run build",
+    "dev_command": "npm run dev",
+    "build_must_pass": "ALWAYS run npm run build after changes. Never commit if build fails.",
+    "typescript": "tsc -noEmit runs as part of build — fix all TypeScript errors before committing",
+    "manual_testing": "After build, the engineer tests manually in the Obsidian vault. Report what to test in the commit message or session summary."
+  },
+
+  "new_file_type": {
+    "checklist": [
+      "Define VIEW_TYPE_XXX in src/types.ts",
+      "Create src/views/XxxView.ts extending FileView",
+      "Register view in src/main.ts onload()",
+      "Add enableXxx boolean to PluginSettings (default: true)",
+      "Add settings toggle in settings tab under 'File Types' section",
+      "Add canAcceptExtension() returning extension check",
+      "Lazy-import any heavy library inside onLoadFile()",
+      "Handle cleanup in onUnloadFile()",
+      "Add req to requirements.toon and mark as done",
+      "Update projectplan.md file type table",
+      "Bump minor version"
+    ],
+    "bundle_size_gate": "Run: ls -lh main.js after build. If > 2MB, use dynamic import() for the new library."
+  },
+
+  "settings": {
+    "adding_new_setting": [
+      "Add typed field to PluginSettings interface in src/settings.ts",
+      "Add sensible default value to DEFAULT_SETTINGS",
+      "Add UI control in the settings tab (appropriate section)",
+      "Read value from this.plugin.settings at runtime — never hardcode",
+      "Call this.plugin.saveSettings() after any modification"
+    ]
+  },
+
+  "css": {
+    "rule": "Only Obsidian CSS variables. No hardcoded colours or font sizes.",
+    "new_class_naming": "All plugin classes prefixed with via- (e.g., .via-pdf-toolbar, .via-docx-wrapper)",
+    "test_both_themes": "Verify appearance in both light and dark Obsidian themes before shipping"
+  },
+
+  "documentation": {
+    "docs_folder": "/docs/ — read before using any Obsidian API",
+    "agent_files": "/.Agent/ — governance files, read at session start",
+    "update_triggers": {
+      "projectplan.md": "After every commit",
+      "requirements.toon": "When a requirement status changes",
+      "agentmemo.md": "At session end",
+      "constraints.toon": "When a new rule is established (engineer approval required)"
+    }
+  }
+}

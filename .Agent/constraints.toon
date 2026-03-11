@@ -1,0 +1,252 @@
+# ============================================================
+#  ViewItAll-md — .Agent/constraints.toon
+#  HARD RULES  •  QUALITY GATES  •  OPERATING CONSTRAINTS
+# ============================================================
+#
+#  These constraints are NON-NEGOTIABLE.
+#  An agent MUST NOT violate any rule below without explicit,
+#  written approval from the engineer in the same session.
+#
+# ============================================================
+
+[meta]
+format       = "custom-toml-like/1.0"
+last_updated = "2026-03-11"
+
+
+# ──────────────────────────────────────────────────────────────
+#  1. INFORMATION SOURCES  —  where to look before coding
+# ──────────────────────────────────────────────────────────────
+
+[information_sources]
+
+primary = """
+  /docs/ directory in the repo root.
+  This contains official Obsidian API docs and plugin development
+  guides. READ relevant docs files before using any Obsidian API.
+  Never guess at API signatures — check docs/ first.
+"""
+
+secondary = """
+  Existing source files in src/.
+  If you need to understand how something already works, read the
+  source before making assumptions. The codebase is the ground truth.
+"""
+
+banned = """
+  Do NOT fetch external URLs for Obsidian API documentation during
+  a coding task. The /docs/ folder is the authoritative source.
+  External searches are permitted ONLY for third-party library APIs
+  (e.g., pdf.js, SheetJS) that are not documented in /docs/.
+"""
+
+
+# ──────────────────────────────────────────────────────────────
+#  2. CODE QUALITY  —  must-follow coding standards
+# ──────────────────────────────────────────────────────────────
+
+[code_quality]
+
+language = "TypeScript — strict mode, explicit types on all public APIs"
+
+no_any = """
+  Avoid 'any' types. Use 'unknown' + type guards, or proper interfaces.
+  If a third-party type is missing, define a minimal local interface.
+"""
+
+no_hardcoded_config = """
+  No hardcoded keyboard shortcuts, colours, sizes, or feature flags.
+  All user-configurable values MUST come from PluginSettings.
+  Add new settings to src/settings.ts and expose them in the settings tab.
+"""
+
+imports = """
+  Import Obsidian APIs from 'obsidian' only.
+  Import pdfjs types from 'pdfjs-dist/types/src/display/api' (not main).
+  Relative imports: use correct depth (e.g. '../../types' vs '../types').
+"""
+
+file_structure = """
+  src/main.ts         — plugin lifecycle only (load/unload/register)
+  src/settings.ts     — PluginSettings interface, defaults, settings tab
+  src/types.ts        — shared TypeScript types and constants
+  src/views/          — FileView subclasses (one file per view type)
+  src/views/pdf/      — PDF-specific controllers and types
+  src/utils/          — pure utility functions (no Obsidian state)
+  styles.css          — all CSS (single file, Obsidian vars only)
+"""
+
+module_size = """
+  No single file should exceed 600 lines.
+  If a view file grows beyond this, extract controllers to src/views/<type>/.
+"""
+
+no_console_log = "Remove all console.log() before committing. Use Notice() for user-facing messages."
+
+error_handling = """
+  Wrap all async file operations in try/catch.
+  Show user-friendly Notice() messages on failure.
+  Never let an unhandled rejection crash the plugin.
+"""
+
+
+# ──────────────────────────────────────────────────────────────
+#  3. UI / UX CONSTRAINTS  —  the non-negotiable design rules
+# ──────────────────────────────────────────────────────────────
+
+[ui_constraints]
+
+css_variables_only = """
+  ONLY use Obsidian CSS variables in styles.css.
+  Banned: hardcoded hex colours, rgb(), hsl(), hardcoded px font sizes.
+  Allowed: var(--...), calc(), relative units (em, rem, %), CSS env().
+  Exception: rgba() shadow values with 0-alpha only (e.g. rgba(0,0,0,0.15)).
+"""
+
+icons = """
+  ALWAYS use setIcon(element, 'lucide-icon-name') for icons.
+  NEVER use emoji characters as button labels.
+  ALWAYS use setTooltip(element, text) instead of element.title = ...
+"""
+
+native_classes = """
+  Use .clickable-icon for icon buttons (hover, active states free).
+  Use .mod-cta for primary confirm buttons in modals.
+  Use modal-button-container for modal button rows.
+  Use setTitle() on modals instead of creating h3 elements.
+"""
+
+no_react = """
+  Do NOT add React. The native Obsidian DOM API achieves the same
+  native feel without the 40kb overhead and hydration complexity.
+  Use createEl(), setIcon(), setTooltip(), addAction() instead.
+"""
+
+toolbar_philosophy = """
+  Primary annotation tools → annotation toolbar.
+  Secondary / infrequent actions → view header via addAction().
+  Keep the toolbar focused and uncluttered.
+  Settings-level config → Settings tab only (never in toolbar).
+"""
+
+
+# ──────────────────────────────────────────────────────────────
+#  4. PERFORMANCE CONSTRAINTS
+# ──────────────────────────────────────────────────────────────
+
+[performance]
+
+bundle_size = """
+  main.js must stay under 2MB minified.
+  Check size after adding any new library: ls -lh main.js
+  If a library pushes the bundle over limit, use dynamic import()
+  so it is only loaded when the relevant file type is opened.
+"""
+
+lazy_loading = """
+  Heavy libraries (pptx renderer, Three.js, epub.js) MUST use
+  dynamic import() — load on first file open, not on plugin load.
+  Pattern:
+    const lib = await import('heavy-library');
+"""
+
+pdf_rendering = """
+  Never render all pages on load.
+  Use IntersectionObserver to render only visible pages.
+  Destroy pdfDoc on file close to free WebGL/canvas memory.
+"""
+
+canvas_cleanup = """
+  Call pdfDoc.destroy() in onUnloadFile().
+  Disconnect all IntersectionObservers in onUnloadFile().
+  Remove all document-level event listeners registered in onload()
+  via this.registerDomEvent() so Obsidian handles cleanup.
+"""
+
+debounce = """
+  Zoom re-render: debounce 120ms.
+  Search input: debounce 300ms.
+  Any operation that triggers a full re-render must be debounced.
+"""
+
+
+# ──────────────────────────────────────────────────────────────
+#  5. GIT / VERSIONING CONSTRAINTS
+# ──────────────────────────────────────────────────────────────
+
+[versioning]
+
+scheme = "Semantic Versioning: MAJOR.MINOR.PATCH"
+
+rules = """
+  PATCH bump  — bug fixes, style tweaks, text changes
+  MINOR bump  — new features, new file type support, new settings
+  MAJOR bump  — breaking changes to annotation format or settings schema
+"""
+
+bump_command = """
+  npm version patch --no-git-tag-version   (then version-bump.mjs auto-runs)
+  npm version minor --no-git-tag-version
+  npm version major --no-git-tag-version
+"""
+
+files_to_sync = "package.json, manifest.json, versions.json — all must match after bump"
+
+commit_message_format = """
+  type(scope): short description (vX.Y.Z)
+
+  - bullet point detail
+  - another detail
+
+  Assisted by GitHub Copilot
+"""
+
+commit_types   = "feat | fix | refactor | style | docs | chore | perf"
+no_co_author   = "NEVER add 'Co-authored-by:' trailer. Use 'Assisted by GitHub Copilot' in body only."
+no_build_artifacts = "Never commit main.js, node_modules/, or *.js.map to git."
+
+
+# ──────────────────────────────────────────────────────────────
+#  6. APPROACH TO PROBLEMS
+# ──────────────────────────────────────────────────────────────
+
+[problem_approach]
+
+before_coding = """
+  1. Read /docs/ for relevant Obsidian APIs.
+  2. Read existing code for patterns already established.
+  3. Check requirements.toon — is this requirement already defined?
+  4. Check constraints.toon — does anything here apply?
+  5. If scope is unclear: ask the engineer ONE focused question.
+  6. Write a brief plan before touching files (use session plan.md).
+"""
+
+when_stuck = """
+  1. Re-read the relevant /docs/ file.
+  2. Read similar patterns in the existing codebase.
+  3. Try the simplest approach first.
+  4. If a third-party library is needed, check bundle size impact first.
+  5. If still blocked: surface the blocker to the engineer clearly.
+"""
+
+banned_patterns = """
+  - setTimeout() for UI synchronisation (use proper async/await)
+  - Direct DOM manipulation bypassing Obsidian's createEl() in views
+  - Storing state in module-level globals (use class properties)
+  - Reading vault files outside of onLoadFile / onUnloadFile lifecycle
+  - Writing to the vault on every keystroke (debounce or use blur)
+"""
+
+new_file_type_checklist = """
+  When adding support for a new file type:
+  [ ] Define VIEW_TYPE_XXX constant in src/types.ts
+  [ ] Create src/views/XxxView.ts extending FileView
+  [ ] Register view in src/main.ts onload()
+  [ ] Add enableXxx boolean to PluginSettings with default true
+  [ ] Add settings toggle in settings tab under 'File Types' section
+  [ ] Add onload() guard: if (!settings.enableXxx) return
+  [ ] Add canAcceptExtension() returning true only when enabled
+  [ ] Lazy-import any heavy library inside onLoadFile()
+  [ ] Add 'xxx' to the File Types section of projectplan.md
+  [ ] Update requirements.toon status for the relevant FT-XX req
+"""
