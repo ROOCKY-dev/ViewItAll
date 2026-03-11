@@ -112,6 +112,33 @@ export class PdfView extends FileView {
 
 	onload(): void {
 		super.onload();
+
+		// ── Document-level Alt / Alt+S handler ──────────────────────────────
+		// Registered on document so it fires regardless of which element has
+		// focus — as long as this leaf is the active one.
+		const isActiveLeaf = () => this.app.workspace.getActiveViewOfType(PdfView) === this;
+
+		this.registerDomEvent(document as unknown as HTMLElement, 'keydown', (e: KeyboardEvent) => {
+			if (!isActiveLeaf()) return;
+			if (e.key === 'Alt') {
+				// Prevent browser default (usually opens menu bar on Windows)
+				e.preventDefault();
+				const drawingTool = this.currentTool === 'pen' || this.currentTool === 'highlighter' || this.currentTool === 'eraser';
+				if (drawingTool) this.snapDirBtnEl?.classList.add('via-btn-snap-active');
+			} else if (e.altKey && e.key.toLowerCase() === 's') {
+				// Alt+S — cycle snap direction
+				e.preventDefault();
+				const dirs: Array<'horizontal' | 'vertical' | 'slope'> = ['horizontal', 'vertical', 'slope'];
+				this.snapDirection = dirs[(dirs.indexOf(this.snapDirection) + 1) % dirs.length]!;
+				this.updateSnapDirBtn();
+			}
+		});
+		this.registerDomEvent(document as unknown as HTMLElement, 'keyup', (e: KeyboardEvent) => {
+			if (!isActiveLeaf()) return;
+			if (e.key === 'Alt') this.snapDirBtnEl?.classList.remove('via-btn-snap-active');
+		});
+
+		// ── Container-level shortcuts (zoom, tools, search) ─────────────────
 		this.registerDomEvent(this.containerEl as HTMLElement, 'keydown', (e: KeyboardEvent) => {
 			// Ctrl/Cmd zoom shortcuts
 			if (e.ctrlKey || e.metaKey) {
@@ -121,29 +148,14 @@ export class PdfView extends FileView {
 				else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); this.openSearchBar(); }
 				return;
 			}
-			// Alt = snap active indicator
-			if (e.key === 'Alt') {
-				const drawingTool = this.currentTool === 'pen' || this.currentTool === 'highlighter' || this.currentTool === 'eraser';
-				if (drawingTool) this.snapDirBtnEl?.classList.add('via-btn-snap-active');
-				return;
-			}
+			// Skip Alt combos — handled above
+			if (e.altKey) return;
 			// Tool shortcuts — guard: don't fire when an input/textarea is focused
 			const target = e.target as HTMLElement;
 			if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
 			const toolMap: Record<string, AnnotTool> = { v: 'none', p: 'pen', h: 'highlighter', e: 'eraser', n: 'note' };
 			const tool = toolMap[e.key.toLowerCase()];
-			if (tool !== undefined) { e.preventDefault(); this.setTool(tool); return; }
-			// S = cycle snap direction
-			if (e.key.toLowerCase() === 's') {
-				e.preventDefault();
-				const dirs: Array<'horizontal' | 'vertical' | 'slope'> = ['horizontal', 'vertical', 'slope'];
-				const idx = dirs.indexOf(this.snapDirection);
-				this.snapDirection = dirs[(idx + 1) % dirs.length]!;
-				this.updateSnapDirBtn();
-			}
-		});
-		this.registerDomEvent(this.containerEl as HTMLElement, 'keyup', (e: KeyboardEvent) => {
-			if (e.key === 'Alt') this.snapDirBtnEl?.classList.remove('via-btn-snap-active');
+			if (tool !== undefined) { e.preventDefault(); this.setTool(tool); }
 		});
 	}
 
@@ -708,7 +720,7 @@ export class PdfView extends FileView {
 		if (!this.snapDirBtnEl) return;
 		const labels = { horizontal: '⟷ H', vertical: '↕ V', slope: '↗ 45°' };
 		this.snapDirBtnEl.textContent = labels[this.snapDirection];
-		this.snapDirBtnEl.title = `Snap: ${this.snapDirection} — S key or click to cycle · hold Alt while drawing to activate`;
+		this.snapDirBtnEl.title = `Snap: ${this.snapDirection} — Alt+S to cycle · hold Alt while drawing to activate`;
 	}
 
 	/** Constrain `raw` to the current snap direction from `origin`. */
