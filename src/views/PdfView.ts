@@ -10,8 +10,6 @@ import {
 } from '../utils/pdfAnnotations';
 import type ViewItAllPlugin from '../main';
 
-// The worker source is inlined by the esbuild `pdf-worker-inline` plugin.
-// We create a Blob URL once so Electron's renderer can spawn the worker thread.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const _pdfWorkerSrc: string = require('pdfjs-worker-src');
 let _workerBlobUrl: string | null = null;
@@ -24,36 +22,42 @@ function getPdfWorkerUrl(): string {
 }
 
 type AnnotTool = 'none' | 'pen' | 'highlighter' | 'eraser';
+type PageRenderState = 'placeholder' | 'rendering' | 'rendered';
 
-interface PageRenderCtx {
+interface PageCtx {
 	pageNum: number;
-	pdfCanvas: HTMLCanvasElement;
-	annotCanvas: HTMLCanvasElement;
+	state: PageRenderState;
 	container: HTMLElement;
+	pdfCanvas: HTMLCanvasElement | null;
+	annotCanvas: HTMLCanvasElement | null;
+	w: number;
+	h: number;
 }
 
 export class PdfView extends FileView {
 	private plugin: ViewItAllPlugin;
 	private pdfDoc: pdfjsLib.PDFDocumentProxy | null = null;
 	private annotData: AnnotationFile = { version: 1, pages: [] };
-	private pages: PageRenderCtx[] = [];
+	private pages: PageCtx[] = [];
 	private currentTool: AnnotTool = 'none';
 	private isDrawing = false;
 	private currentPath: AnnotationPath | null = null;
 	private currentFile: TFile | null = null;
 
-	// Zoom — stored as a scale factor (1.0 = 100%)
+	// Zoom
 	private currentScale = 1.0;
 	private readonly ZOOM_STEPS = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0];
 	private scrollAreaEl: HTMLElement | null = null;
 	private zoomLabelEl: HTMLElement | null = null;
+	private _zoomDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-	// Page tracking
+	// Lazy rendering — renderObserver triggers canvas creation as pages enter viewport;
+	// pageObserver drives the toolbar page indicator.
 	private pageIndicatorEl: HTMLElement | null = null;
 	private pageObserver: IntersectionObserver | null = null;
-
-	// Debounce zoom re-renders so rapid scroll events don't queue concurrent renders
-	private _zoomDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+	private renderObserver: IntersectionObserver | null = null;
+	// Incremented on reload/zoom to cancel in-flight async renders
+	private _renderGen = 0;
 
 	constructor(leaf: WorkspaceLeaf, plugin: ViewItAllPlugin) {
 		super(leaf);
@@ -63,29 +67,18 @@ export class PdfView extends FileView {
 
 	onload(): void {
 		super.onload();
-		// Keyboard zoom shortcuts — registered once per view lifetime
 		this.registerDomEvent(this.containerEl as HTMLElement, 'keydown', (e: KeyboardEvent) => {
 			if (!e.ctrlKey && !e.metaKey) return;
-			if (e.key === '0') {
-				e.preventDefault();
-				this.setZoom(1.0, this.viewportCenterFrac());
-			} else if (e.key === '=' || e.key === '+') {
-				e.preventDefault();
-				this.stepZoom(+1);
-			} else if (e.key === '-') {
-				e.preventDefault();
-				this.stepZoom(-1);
-			}
+			if (e.key === '0') { e.preventDefault(); this.setZoom(1.0, this.viewportCenterFrac()); }
+			else if (e.key === '=' || e.key === '+') { e.preventDefault(); this.stepZoom(+1); }
+			else if (e.key === '-') { e.preventDefault(); this.stepZoom(-1); }
 		});
 	}
 
 	getViewType(): string { return VIEW_TYPE_PDF; }
 	getDisplayText(): string { return this.file?.basename ?? 'PDF'; }
 	getIcon(): string { return 'file'; }
-
-	canAcceptExtension(extension: string): boolean {
-		return extension === 'pdf';
-	}
+	canAcceptExtension(extension: string): boolean { return extension === 'pdf'; }
 
 	async onLoadFile(file: TFile): Promise<void> {
 		this.currentFile = file;
@@ -95,38 +88,32 @@ export class PdfView extends FileView {
 	}
 
 	async onUnloadFile(_file: TFile): Promise<void> {
+		this._renderGen++;
 		if (this._zoomDebounceTimer !== null) { clearTimeout(this._zoomDebounceTimer); this._zoomDebounceTimer = null; }
-		this.pageObserver?.disconnect();
-		this.pageObserver = null;
+		this.renderObserver?.disconnect(); this.renderObserver = null;
+		this.pageObserver?.disconnect(); this.pageObserver = null;
 		if (this.pdfDoc) { this.pdfDoc.destroy(); this.pdfDoc = null; }
 		this.pages = [];
 		this.contentEl.empty();
 	}
 
-	// ── Render ──────────────────────────────────────────────────────────────
+	// Render ----------------------------------------------------------------
 
 	private async renderPdf(file: TFile): Promise<void> {
+		this._renderGen++;
 		this.contentEl.empty();
 		this.pages = [];
-		this.scrollAreaEl = null;
-		this.zoomLabelEl = null;
-		this.pageIndicatorEl = null;
-		this.pageObserver?.disconnect();
-		this.pageObserver = null;
+		this.renderObserver?.disconnect(); this.renderObserver = null;
+		this.pageObserver?.disconnect(); this.pageObserver = null;
 
-		// Flex wrapper fills the full leaf height
 		const wrapper = this.contentEl.createEl('div', { cls: 'via-pdf-wrapper' });
-
 		const toolbar = this.buildToolbar();
 		wrapper.appendChild(toolbar);
 
 		const scrollArea = wrapper.createEl('div', { cls: 'via-pdf-scroll' });
 		this.scrollAreaEl = scrollArea;
-
-		// Ctrl/Cmd + scroll = zoom centred on pointer
 		scrollArea.addEventListener('wheel', (e: WheelEvent) => this.handleWheelZoom(e), { passive: false });
 
-		// Loading indicator — shown while PDF is parsed and pages are rendered
 		const loadingEl = scrollArea.createEl('div', { cls: 'via-pdf-loading' });
 		loadingEl.createEl('div', { cls: 'via-pdf-loading-spinner' });
 		loadingEl.createEl('span', { text: 'Loading PDF…' });
@@ -140,81 +127,113 @@ export class PdfView extends FileView {
 			return;
 		}
 
-		const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
-		this.pdfDoc = await loadingTask.promise;
+		this.pdfDoc = await pdfjsLib.getDocument({ data: new Uint8Array(buffer) }).promise;
+		const numPages = this.pdfDoc.numPages;
 
-		// Render ALL pages into a temp container first, then insert atomically.
-		// This keeps the loading spinner visible until every page is ready.
-		const tempContainer = document.createElement('div');
-		for (let i = 1; i <= this.pdfDoc.numPages; i++) {
-			const ctx = await this.renderPage(i, tempContainer);
-			this.addPageLabel(tempContainer, i);
-			this.pages.push(ctx);
-		}
+		// Pre-calculate ALL page sizes in parallel (viewport math only, no canvas ops)
+		const sizes = await Promise.all(
+			Array.from({ length: numPages }, async (_, i) => {
+				const page = await this.pdfDoc!.getPage(i + 1);
+				const vp = page.getViewport({ scale: this.currentScale });
+				return { w: Math.ceil(vp.width), h: Math.ceil(vp.height) };
+			})
+		);
 
 		loadingEl.remove();
-		while (tempContainer.firstChild) scrollArea.appendChild(tempContainer.firstChild);
 
-		for (const ctx of this.pages) {
-			this.redrawAnnotations(ctx);
-			this.attachDrawListeners(ctx);
+		// Create all placeholder divs + labels atomically
+		for (let i = 0; i < numPages; i++) {
+			const { w, h } = sizes[i]!;
+			const container = scrollArea.createEl('div', { cls: 'via-pdf-page' });
+			container.style.cssText = `width:${w}px;height:${h}px;min-width:${w}px;min-height:${h}px`;
+			scrollArea.createEl('div', { cls: 'via-pdf-page-label', text: `${i + 1} / ${numPages}` });
+			this.pages.push({ pageNum: i + 1, state: 'placeholder', container, pdfCanvas: null, annotCanvas: null, w, h });
 		}
-		this.updateCanvasInteraction();
+
+		if (this.pageIndicatorEl) this.pageIndicatorEl.textContent = `1 / ${numPages}`;
+		this.attachRenderObserver();
 		this.attachPageObserver();
 	}
 
-	private async renderPage(pageNum: number, container: HTMLElement): Promise<PageRenderCtx> {
-		const page = await this.pdfDoc!.getPage(pageNum);
+	// Lazy rendering ---------------------------------------------------------
+
+	// rootMargin "200% 0px": render pages within 2x viewport height above/below.
+	// Pages leaving that zone are unloaded to free GPU memory.
+	private attachRenderObserver(): void {
+		this.renderObserver?.disconnect();
+		if (!this.scrollAreaEl || this.pages.length === 0) return;
+
+		const pageMap = new Map<Element, PageCtx>(this.pages.map(p => [p.container, p]));
+
+		this.renderObserver = new IntersectionObserver(
+			(entries) => {
+				for (const entry of entries) {
+					const ctx = pageMap.get(entry.target);
+					if (!ctx) continue;
+					if (entry.isIntersecting) {
+						this.renderPageCanvas(ctx).catch(console.error);
+					} else {
+						this.unloadPageCanvas(ctx);
+					}
+				}
+			},
+			{ root: this.scrollAreaEl, rootMargin: '200% 0px' }
+		);
+
+		for (const ctx of this.pages) this.renderObserver.observe(ctx.container);
+	}
+
+	private async renderPageCanvas(ctx: PageCtx): Promise<void> {
+		if (ctx.state !== 'placeholder') return;
+		ctx.state = 'rendering';
+		const gen = this._renderGen;
+
+		const page = await this.pdfDoc!.getPage(ctx.pageNum);
 		const viewport = page.getViewport({ scale: this.currentScale });
 
-		const w = Math.ceil(viewport.width);
-		const h = Math.ceil(viewport.height);
+		if (gen !== this._renderGen) { ctx.state = 'placeholder'; return; }
 
-		// Explicit block sizing so flex doesn't collapse the page
-		const pageWrap = container.createEl('div', { cls: 'via-pdf-page' });
-		pageWrap.style.width  = `${w}px`;
-		pageWrap.style.height = `${h}px`;
-		pageWrap.style.minWidth = `${w}px`;
-		pageWrap.style.minHeight = `${h}px`;
+		const pdfCanvas = ctx.container.createEl('canvas', { cls: 'via-pdf-canvas' });
+		pdfCanvas.width = ctx.w; pdfCanvas.height = ctx.h;
 
-		const pdfCanvas = pageWrap.createEl('canvas', { cls: 'via-pdf-canvas' });
-		pdfCanvas.width  = w;
-		pdfCanvas.height = h;
+		const annotCanvas = ctx.container.createEl('canvas', { cls: 'via-pdf-annot-canvas' });
+		annotCanvas.width = ctx.w; annotCanvas.height = ctx.h;
 
-		const annotCanvas = pageWrap.createEl('canvas', { cls: 'via-pdf-annot-canvas' });
-		annotCanvas.width  = w;
-		annotCanvas.height = h;
+		await page.render({ canvasContext: pdfCanvas.getContext('2d')!, viewport }).promise;
 
-		const renderCtx = {
-			canvasContext: pdfCanvas.getContext('2d')!,
-			viewport,
-		};
-		await page.render(renderCtx).promise;
+		if (gen !== this._renderGen) {
+			pdfCanvas.remove(); annotCanvas.remove();
+			ctx.state = 'placeholder';
+			return;
+		}
 
-		return { pageNum, pdfCanvas, annotCanvas, container: pageWrap };
+		ctx.pdfCanvas = pdfCanvas;
+		ctx.annotCanvas = annotCanvas;
+		ctx.state = 'rendered';
+
+		this.redrawAnnotations(ctx);
+		this.attachDrawListeners(ctx);
+		this.updateCanvasInteraction();
 	}
 
-	// Append the page label AFTER the page wrapper in the scroll area (sibling, not child,
-	// because canvases inside pageWrap are position:absolute so pageWrap can't grow for a label)
-	private addPageLabel(container: HTMLElement, pageNum: number): void {
-		container.createEl('div', {
-			cls: 'via-pdf-page-label',
-			text: `${pageNum} / ${this.pdfDoc!.numPages}`,
-		});
+	private unloadPageCanvas(ctx: PageCtx): void {
+		if (ctx.state !== 'rendered') return;
+		ctx.pdfCanvas?.remove(); ctx.pdfCanvas = null;
+		ctx.annotCanvas?.remove(); ctx.annotCanvas = null;
+		ctx.state = 'placeholder';
 	}
 
-	// ── Toolbar ─────────────────────────────────────────────────────────────
+	// Toolbar ----------------------------------------------------------------
 
 	private buildToolbar(): HTMLElement {
 		const bar = document.createElement('div');
 		bar.className = 'via-pdf-toolbar';
 
-		// Annotation tools
 		const tools: { id: AnnotTool; label: string }[] = [
-			{ id: 'none', label: '👁 View' },
-			{ id: 'pen', label: '✏️ Pen' },
-			{ id: 'highlighter', label: '🖊 Highlight' },
-			{ id: 'eraser', label: '⬜ Erase' },
+			{ id: 'none', label: '\ud83d\udc41 View' },
+			{ id: 'pen', label: '\u270f\ufe0f Pen' },
+			{ id: 'highlighter', label: '\ud83d\udd8a Highlight' },
+			{ id: 'eraser', label: '\u2b1c Erase' },
 		];
 
 		for (const t of tools) {
@@ -232,9 +251,8 @@ export class PdfView extends FileView {
 
 		bar.createEl('div', { cls: 'via-toolbar-sep' });
 
-		// Zoom controls
-		const zoomOut = bar.createEl('button', { cls: 'via-btn via-btn-zoom', text: '−' });
-		zoomOut.title = 'Zoom out (Ctrl+−)';
+		const zoomOut = bar.createEl('button', { cls: 'via-btn via-btn-zoom', text: '\u2212' });
+		zoomOut.title = 'Zoom out (Ctrl+\u2212)';
 		zoomOut.addEventListener('click', () => this.stepZoom(-1));
 
 		this.zoomLabelEl = bar.createEl('button', {
@@ -250,25 +268,21 @@ export class PdfView extends FileView {
 
 		bar.createEl('div', { cls: 'via-toolbar-sep' });
 
-		// Page indicator — updated live by IntersectionObserver
-		this.pageIndicatorEl = bar.createEl('span', {
-			cls: 'via-pdf-page-indicator',
-			text: '— / —',
-		});
+		this.pageIndicatorEl = bar.createEl('span', { cls: 'via-pdf-page-indicator', text: '\u2014 / \u2014' });
 		this.pageIndicatorEl.title = 'Current page / total pages';
 
 		bar.createEl('div', { cls: 'via-toolbar-sep' });
 
-		const clearBtn = bar.createEl('button', { cls: 'via-btn via-btn-danger', text: '🗑 Clear page' });
+		const clearBtn = bar.createEl('button', { cls: 'via-btn via-btn-danger', text: '\ud83d\uddd1 Clear page' });
 		clearBtn.addEventListener('click', () => this.clearCurrentPageAnnotations());
 
-		const saveBtn = bar.createEl('button', { cls: 'via-btn via-btn-save', text: '💾 Save annotations' });
+		const saveBtn = bar.createEl('button', { cls: 'via-btn via-btn-save', text: '\ud83d\udcbe Save annotations' });
 		saveBtn.addEventListener('click', () => this.persistAnnotations());
 
 		return bar;
 	}
 
-	// ── Zoom ────────────────────────────────────────────────────────────────
+	// Zoom -------------------------------------------------------------------
 
 	private stepZoom(direction: -1 | 1): void {
 		const idx = this.ZOOM_STEPS.findIndex(s => Math.abs(s - this.currentScale) < 0.01);
@@ -289,7 +303,6 @@ export class PdfView extends FileView {
 		const scrollEl = this.scrollAreaEl;
 		if (!scrollEl) return;
 
-		// Capture focal point at the time of the wheel event
 		const rect = scrollEl.getBoundingClientRect();
 		const pX = e.clientX - rect.left;
 		const pY = e.clientY - rect.top;
@@ -303,11 +316,9 @@ export class PdfView extends FileView {
 		const next = this.ZOOM_STEPS[Math.max(0, Math.min(this.ZOOM_STEPS.length - 1, idx + (e.deltaY < 0 ? 1 : -1)))];
 		if (next === undefined || Math.abs(next - this.currentScale) < 0.001) return;
 
-		// Update the label immediately for a responsive feel
 		this.currentScale = next;
 		if (this.zoomLabelEl) this.zoomLabelEl.textContent = `${Math.round(next * 100)}%`;
 
-		// Debounce the expensive re-render — fires 250 ms after the last wheel event
 		if (this._zoomDebounceTimer !== null) clearTimeout(this._zoomDebounceTimer);
 		this._zoomDebounceTimer = setTimeout(() => {
 			this._zoomDebounceTimer = null;
@@ -318,8 +329,7 @@ export class PdfView extends FileView {
 	private viewportCenterFrac(): { x: number; y: number; pX: number; pY: number } | undefined {
 		const el = this.scrollAreaEl;
 		if (!el) return undefined;
-		const pX = el.clientWidth  / 2;
-		const pY = el.clientHeight / 2;
+		const pX = el.clientWidth / 2, pY = el.clientHeight / 2;
 		return {
 			x: (el.scrollLeft + pX) / (el.scrollWidth  || 1),
 			y: (el.scrollTop  + pY) / (el.scrollHeight || 1),
@@ -327,65 +337,50 @@ export class PdfView extends FileView {
 		};
 	}
 
+	// On zoom: cancel in-flight renders, resize all placeholders in parallel,
+	// then re-observe. Only visible pages get re-rendered — O(visible) not O(total).
 	private async reRenderPages(frac?: { x: number; y: number; pX: number; pY: number }): Promise<void> {
 		if (!this.pdfDoc || !this.scrollAreaEl) return;
+		this._renderGen++;
 		const scrollEl = this.scrollAreaEl;
 
-		// Disconnect observer before touching the DOM
-		this.pageObserver?.disconnect();
-		this.pageObserver = null;
+		this.renderObserver?.disconnect(); this.renderObserver = null;
+		this.pageObserver?.disconnect(); this.pageObserver = null;
 
-		// Overlay covers existing pages so there is no blank flash while rendering
-		const overlay = document.createElement('div');
-		overlay.className = 'via-pdf-loading via-pdf-loading-overlay';
-		const spinner = document.createElement('div');
-		spinner.className = 'via-pdf-loading-spinner';
-		overlay.appendChild(spinner);
-		const lbl = document.createElement('span');
-		lbl.textContent = 'Rendering…';
-		overlay.appendChild(lbl);
-		scrollEl.appendChild(overlay);
+		// Recalculate sizes in parallel
+		const sizes = await Promise.all(
+			this.pages.map(async (ctx) => {
+				const page = await this.pdfDoc!.getPage(ctx.pageNum);
+				const vp = page.getViewport({ scale: this.currentScale });
+				return { w: Math.ceil(vp.width), h: Math.ceil(vp.height) };
+			})
+		);
 
-		// Render all pages off-screen into a temp container
-		const tempContainer = document.createElement('div');
-		const newPages: PageRenderCtx[] = [];
-		for (let i = 1; i <= this.pdfDoc.numPages; i++) {
-			const ctx = await this.renderPage(i, tempContainer);
-			this.addPageLabel(tempContainer, i);
-			newPages.push(ctx);
+		for (let i = 0; i < this.pages.length; i++) {
+			const ctx = this.pages[i]!;
+			const { w, h } = sizes[i]!;
+			ctx.w = w; ctx.h = h;
+			ctx.container.style.cssText = `width:${w}px;height:${h}px;min-width:${w}px;min-height:${h}px`;
+			this.unloadPageCanvas(ctx);
 		}
 
-		// Atomic swap: remove old pages/labels, move new ones in, drop overlay
-		for (const ctx of this.pages) ctx.container.remove();
-		scrollEl.querySelectorAll('.via-pdf-page-label').forEach(l => l.remove());
-		while (tempContainer.firstChild) scrollEl.insertBefore(tempContainer.firstChild, overlay);
-		overlay.remove();
-
-		this.pages = newPages;
-		for (const ctx of this.pages) {
-			this.redrawAnnotations(ctx);
-			this.attachDrawListeners(ctx);
-		}
-		this.updateCanvasInteraction();
-		this.attachPageObserver();
-
-		// Restore focal point after layout is updated
 		if (frac) {
 			scrollEl.scrollLeft = frac.x * scrollEl.scrollWidth  - frac.pX;
 			scrollEl.scrollTop  = frac.y * scrollEl.scrollHeight - frac.pY;
 		}
+
+		this.attachRenderObserver();
+		this.attachPageObserver();
 	}
 
-	// ── Page tracking ────────────────────────────────────────────────────────
+	// Page indicator ---------------------------------------------------------
 
 	private attachPageObserver(): void {
 		this.pageObserver?.disconnect();
 		if (!this.scrollAreaEl || this.pages.length === 0) return;
 
 		const total = this.pdfDoc!.numPages;
-		// Map container element → pageNum for O(1) lookup in the callback
 		const pageMap = new Map<Element, number>(this.pages.map(p => [p.container, p.pageNum]));
-		// Track how much of each page is visible
 		const visibleRatio = new Map<number, number>();
 
 		this.pageObserver = new IntersectionObserver(
@@ -394,52 +389,44 @@ export class PdfView extends FileView {
 					const num = pageMap.get(entry.target);
 					if (num !== undefined) visibleRatio.set(num, entry.intersectionRatio);
 				}
-				// The most-visible page wins
-				let bestPage = 1;
-				let bestRatio = -1;
+				let bestPage = 1, bestRatio = -1;
 				for (const [num, ratio] of visibleRatio) {
 					if (ratio > bestRatio) { bestRatio = ratio; bestPage = num; }
 				}
-				if (this.pageIndicatorEl) {
-					this.pageIndicatorEl.textContent = `${bestPage} / ${total}`;
-				}
+				if (this.pageIndicatorEl) this.pageIndicatorEl.textContent = `${bestPage} / ${total}`;
 			},
 			{ root: this.scrollAreaEl, threshold: Array.from({ length: 11 }, (_, i) => i / 10) }
 		);
 
 		for (const ctx of this.pages) this.pageObserver.observe(ctx.container);
-		// Seed the indicator immediately
 		if (this.pageIndicatorEl) this.pageIndicatorEl.textContent = `1 / ${total}`;
 	}
 
 	private updateCanvasInteraction(): void {
 		for (const ctx of this.pages) {
+			if (!ctx.annotCanvas) continue;
 			const drawing = this.currentTool !== 'none';
 			ctx.annotCanvas.style.pointerEvents = drawing ? 'auto' : 'none';
 			ctx.annotCanvas.style.cursor = drawing ? 'crosshair' : 'default';
 		}
 	}
 
-	// ── Drawing ─────────────────────────────────────────────────────────────
+	// Drawing ----------------------------------------------------------------
 
-	private attachDrawListeners(ctx: PageRenderCtx): void {
-		const { annotCanvas, pageNum } = ctx;
+	private attachDrawListeners(ctx: PageCtx): void {
+		const annotCanvas = ctx.annotCanvas;
+		if (!annotCanvas) return;
+		const { pageNum } = ctx;
 
-		// Coordinates are stored **normalized** (0–1 relative to canvas size)
-		// so they remain valid when the canvas is re-rendered at a different zoom level.
 		const getPos = (e: MouseEvent | PointerEvent) => {
 			const rect = annotCanvas.getBoundingClientRect();
-			return {
-				x: (e.clientX - rect.left) / rect.width,
-				y: (e.clientY - rect.top) / rect.height,
-			};
+			return { x: (e.clientX - rect.left) / rect.width, y: (e.clientY - rect.top) / rect.height };
 		};
 
 		annotCanvas.addEventListener('pointerdown', e => {
 			if (this.currentTool === 'none') return;
 			annotCanvas.setPointerCapture(e.pointerId);
 			this.isDrawing = true;
-			const pos = getPos(e);
 			this.currentPath = {
 				tool: this.currentTool === 'pen' ? 'pen' : this.currentTool === 'eraser' ? 'eraser' : 'highlighter',
 				color: this.currentTool === 'pen'
@@ -452,14 +439,13 @@ export class PdfView extends FileView {
 					: this.currentTool === 'highlighter'
 						? this.plugin.settings.highlighterWidth
 						: 20,
-				points: [pos],
+				points: [getPos(e)],
 			};
 		});
 
 		annotCanvas.addEventListener('pointermove', e => {
 			if (!this.isDrawing || !this.currentPath) return;
-			const pos = getPos(e);
-			this.currentPath.points.push(pos);
+			this.currentPath.points.push(getPos(e));
 			this.redrawAnnotations(ctx, this.currentPath);
 		});
 
@@ -477,65 +463,52 @@ export class PdfView extends FileView {
 		annotCanvas.addEventListener('pointercancel', finishDraw);
 	}
 
-	// ── Annotation rendering ─────────────────────────────────────────────────
+	// Annotations ------------------------------------------------------------
 
-	private redrawAnnotations(ctx: PageRenderCtx, inProgressPath?: AnnotationPath): void {
+	private redrawAnnotations(ctx: PageCtx, inProgressPath?: AnnotationPath): void {
+		if (!ctx.annotCanvas) return;
 		const canvas = ctx.annotCanvas;
 		const c = canvas.getContext('2d')!;
 		c.clearRect(0, 0, canvas.width, canvas.height);
 
-		const pa: PageAnnotations = getPageAnnotations(this.annotData, ctx.pageNum);
-
 		const drawPath = (path: AnnotationPath) => {
 			if (path.points.length < 2) return;
-			const w = canvas.width;
-			const h = canvas.height;
 			c.save();
 			if (path.tool === 'highlighter') {
-				c.globalAlpha = 0.35;
-				c.globalCompositeOperation = 'multiply';
+				c.globalAlpha = 0.35; c.globalCompositeOperation = 'multiply';
 			} else if (path.tool === 'eraser') {
-				c.globalCompositeOperation = 'destination-out';
-				c.globalAlpha = 1;
+				c.globalCompositeOperation = 'destination-out'; c.globalAlpha = 1;
 			} else {
-				c.globalAlpha = 1;
-				c.globalCompositeOperation = 'source-over';
+				c.globalAlpha = 1; c.globalCompositeOperation = 'source-over';
 			}
 			c.strokeStyle = path.color;
-			// Line width also needs to scale with the canvas (stored relative to 100% zoom)
 			c.lineWidth = path.width * this.currentScale;
-			c.lineCap = 'round';
-			c.lineJoin = 'round';
+			c.lineCap = 'round'; c.lineJoin = 'round';
 			c.beginPath();
-			const p0 = path.points[0]!;
-			c.moveTo(p0.x * w, p0.y * h);
+			c.moveTo(path.points[0]!.x * canvas.width, path.points[0]!.y * canvas.height);
 			for (let i = 1; i < path.points.length; i++) {
-				const pi = path.points[i]!;
-				c.lineTo(pi.x * w, pi.y * h);
+				c.lineTo(path.points[i]!.x * canvas.width, path.points[i]!.y * canvas.height);
 			}
 			c.stroke();
 			c.restore();
 		};
 
+		const pa: PageAnnotations = getPageAnnotations(this.annotData, ctx.pageNum);
 		for (const path of pa.paths) drawPath(path);
 		if (inProgressPath) drawPath(inProgressPath);
 	}
 
-	// ── Persistence ──────────────────────────────────────────────────────────
+	// Persistence ------------------------------------------------------------
 
 	private clearCurrentPageAnnotations(): void {
-		// Clears the page currently visible (page 1 as proxy for now; improve with intersection observer)
 		const visiblePage = this.getVisiblePageNum();
-		const pa: PageAnnotations = { page: visiblePage, paths: [] };
-		this.annotData = setPageAnnotations(this.annotData, pa);
+		this.annotData = setPageAnnotations(this.annotData, { page: visiblePage, paths: [] });
 		const ctx = this.pages.find(p => p.pageNum === visiblePage);
 		if (ctx) this.redrawAnnotations(ctx);
 	}
 
 	private getVisiblePageNum(): number {
-		// Find the page whose container is most visible in the scroll area
-		let best = 1;
-		let bestVisible = -Infinity;
+		let best = 1, bestVisible = -Infinity;
 		for (const ctx of this.pages) {
 			const rect = ctx.container.getBoundingClientRect();
 			const visible = Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0);
@@ -548,9 +521,9 @@ export class PdfView extends FileView {
 		if (!this.currentFile) return;
 		try {
 			await saveAnnotations(this.app, this.currentFile, this.annotData);
-			new Notice('✅ Annotations saved');
+			new Notice('\u2705 Annotations saved');
 		} catch (err) {
-			new Notice(`❌ Failed to save annotations: ${String(err)}`);
+			new Notice(`\u274c Failed to save annotations: ${String(err)}`);
 		}
 	}
 }
