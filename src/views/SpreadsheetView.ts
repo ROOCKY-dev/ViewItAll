@@ -223,7 +223,7 @@ export class SpreadsheetView extends FileView {
 		setIcon(this.saveBtn, "save");
 		setTooltip(this.saveBtn, "Save (Ctrl+S)");
 		this.saveBtn.style.display = "none";
-		this.saveBtn.addEventListener("click", () => this.saveFile());
+		this.saveBtn.addEventListener("click", () => { void this.saveFile(); });
 
 		// Undo (revert to last save)
 		this.undoBtn = toolbar.createEl("div", { cls: "clickable-icon" });

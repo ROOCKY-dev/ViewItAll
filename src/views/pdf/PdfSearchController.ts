@@ -105,9 +105,11 @@ export class PdfSearchController {
 			e.stopPropagation();
 			if (e.key === "Enter") {
 				e.preventDefault();
-				e.shiftKey
-					? this.goToMatch(this.currentIdx - 1)
-					: this.goToMatch(this.currentIdx + 1);
+				if (e.shiftKey) {
+					this.goToMatch(this.currentIdx - 1);
+				} else {
+					this.goToMatch(this.currentIdx + 1);
+				}
 			} else if (e.key === "Escape") {
 				e.preventDefault();
 				this.close();
@@ -117,7 +119,7 @@ export class PdfSearchController {
 		this.searchInputEl.addEventListener("input", () => {
 			if (this.debounceTimer) clearTimeout(this.debounceTimer);
 			this.debounceTimer = setTimeout(
-				() => this.performSearch(this.searchInputEl!.value),
+				() => { void this.performSearch(this.searchInputEl!.value); },
 				300,
 			);
 		});

@@ -123,7 +123,7 @@ export class DocxView extends FileView {
 		setIcon(this.saveBtn, "save");
 		setTooltip(this.saveBtn, "Save (overwrite original)");
 		this.saveBtn.style.display = this.editMode ? "" : "none";
-		this.saveBtn.addEventListener("click", () => this.saveFile());
+		this.saveBtn.addEventListener("click", () => { void this.saveFile(); });
 
 		// ── Conversion warnings ────────────────────────────────────────────
 		let html: string;

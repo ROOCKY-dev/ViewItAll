@@ -57,17 +57,17 @@ export class PptxView extends FileView {
 		});
 
 		const prevBtn = toolbar.createEl("button", { text: "◀ Prev" });
-		prevBtn.addEventListener("click", () => this.prevSlide());
+		prevBtn.addEventListener("click", () => { void this.prevSlide(); });
 
 		const nextBtn = toolbar.createEl("button", { text: "Next ▶" });
-		nextBtn.addEventListener("click", () => this.nextSlide());
+		nextBtn.addEventListener("click", () => { void this.nextSlide(); });
 
 		toolbar.createEl("span", { text: "|" }).style.opacity = "0.3";
 
 		const zoomOutBtn = toolbar.createEl("button", { text: "−" });
-		zoomOutBtn.addEventListener("click", () =>
-			this.setZoom(this.zoom - 0.15),
-		);
+		zoomOutBtn.addEventListener("click", () => {
+			void this.setZoom(this.zoom - 0.15);
+		});
 
 		this.zoomLabel = toolbar.createEl("span", {
 			text: "100%",
@@ -79,12 +79,12 @@ export class PptxView extends FileView {
 		});
 
 		const zoomInBtn = toolbar.createEl("button", { text: "+" });
-		zoomInBtn.addEventListener("click", () =>
-			this.setZoom(this.zoom + 0.15),
-		);
+		zoomInBtn.addEventListener("click", () => {
+			void this.setZoom(this.zoom + 0.15);
+		});
 
 		const fitBtn = toolbar.createEl("button", { text: "Fit" });
-		fitBtn.addEventListener("click", () => this.fitToContainer());
+		fitBtn.addEventListener("click", () => { void this.fitToContainer(); });
 
 		toolbar.createEl("span", { text: "|" }).style.opacity = "0.3";
 
@@ -229,7 +229,7 @@ export class PptxView extends FileView {
 		let timeout: ReturnType<typeof setTimeout>;
 		this.resizeObserver = new ResizeObserver(() => {
 			clearTimeout(timeout);
-			timeout = setTimeout(() => this.renderCurrentSlide(), 150);
+			timeout = setTimeout(() => { void this.renderCurrentSlide(); }, 150);
 		});
 		this.resizeObserver.observe(this.canvasWrapper);
 	}

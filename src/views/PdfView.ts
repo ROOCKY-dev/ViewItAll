@@ -28,6 +28,9 @@ import type { PageCtx, PageRenderState } from "./pdf/pdfTypes";
 import type ViewItAllPlugin from "../main";
 import type { SnapDirection } from "../settings";
 
+// Virtual module resolved by esbuild's pdfWorkerPlugin — inlines the pdf.js worker.
+declare const require: (id: string) => string;
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const _pdfWorkerSrc: string = require("pdfjs-worker-src");
 let _workerBlobUrl: string | null = null;
 function getPdfWorkerUrl(): string {
@@ -179,7 +182,7 @@ export class PdfView extends FileView {
 				if (e.ctrlKey || e.metaKey) {
 					if (e.key === "0") {
 						e.preventDefault();
-						this.setZoom(
+						void this.setZoom(
 							s.pdfDefaultZoom,
 							this.viewportCenterFrac(),
 						);
@@ -238,7 +241,7 @@ export class PdfView extends FileView {
 		this.addAction("list", "Table of contents", () => this.toggleToc());
 		this.addAction("file-output", "Export annotated PDF", () => {
 			if (this.currentFile && this.pdfDoc)
-				exportAnnotatedPdf(
+				void exportAnnotatedPdf(
 					this.app,
 					this.currentFile,
 					this.pdfDoc,
@@ -281,7 +284,7 @@ export class PdfView extends FileView {
 		this.pageObserver?.disconnect();
 		this.pageObserver = null;
 		if (this.pdfDoc) {
-			this.pdfDoc.destroy();
+			void this.pdfDoc.destroy();
 			this.pdfDoc = null;
 		}
 		this.pages = [];
@@ -591,9 +594,9 @@ export class PdfView extends FileView {
 			text: `${Math.round(this.currentScale * 100)}%`,
 		});
 		setTooltip(this.zoomLabelEl, "Reset zoom (Ctrl+0)");
-		this.zoomLabelEl.addEventListener("click", () =>
-			this.setZoom(s.pdfDefaultZoom, this.viewportCenterFrac()),
-		);
+		this.zoomLabelEl.addEventListener("click", () => {
+			void this.setZoom(s.pdfDefaultZoom, this.viewportCenterFrac());
+		});
 
 		const zoomInBtn = bar.createEl("div", { cls: "clickable-icon" });
 		setIcon(zoomInBtn, "zoom-in");
@@ -630,7 +633,7 @@ export class PdfView extends FileView {
 		});
 		setIcon(saveBtn, "save");
 		setTooltip(saveBtn, "Save annotations");
-		saveBtn.addEventListener("click", () => this.persistAnnotations());
+		saveBtn.addEventListener("click", () => { void this.persistAnnotations(); });
 
 		return bar;
 	}
@@ -648,7 +651,7 @@ export class PdfView extends FileView {
 					Math.min(this.ZOOM_STEPS.length - 1, idx + direction),
 				)
 			];
-		if (next !== undefined) this.setZoom(next, this.viewportCenterFrac());
+		if (next !== undefined) void this.setZoom(next, this.viewportCenterFrac());
 	}
 
 	private async setZoom(
@@ -1014,7 +1017,7 @@ export class PdfView extends FileView {
 		if (tool !== "pen" && tool !== "highlighter") return;
 		if (tool === "pen") this.plugin.settings.penColor = color;
 		else this.plugin.settings.highlighterColor = color;
-		this.plugin.saveSettings();
+		void this.plugin.saveSettings();
 		if (this.colorDotBtnEl) this.colorDotBtnEl.style.background = color;
 	}
 
@@ -1025,12 +1028,12 @@ export class PdfView extends FileView {
 		if (tool !== "pen" && tool !== "highlighter") return;
 		if (tool === "pen") this.plugin.settings.penWidth = value;
 		else this.plugin.settings.highlighterWidth = value;
-		this.plugin.saveSettings();
+		void this.plugin.saveSettings();
 	}
 
 	private applyOpacity(value: number): void {
 		this.plugin.settings.highlighterOpacity = value;
-		this.plugin.saveSettings();
+		void this.plugin.saveSettings();
 	}
 
 	// Snap -------------------------------------------------------------------
@@ -1387,20 +1390,23 @@ export class PdfView extends FileView {
 					cls: "via-pdf-toc-label",
 					text: item.title ?? "(untitled)",
 				});
-				label.addEventListener("click", async () => {
+				label.addEventListener("click", () => {
 					if (!this.pdfDoc) return;
-					try {
-						let dest = item.dest;
-						if (typeof dest === "string")
-							dest = await this.pdfDoc.getDestination(dest);
-						if (!Array.isArray(dest) || dest.length === 0) return;
-						const pageIdx = await this.pdfDoc.getPageIndex(
-							dest[0] as PdfRefProxy,
-						);
-						this.scrollToPage(pageIdx + 1);
-					} catch {
-						// Destination lookup failed — silently ignore
-					}
+					const pdfDoc = this.pdfDoc;
+					void (async () => {
+						try {
+							let dest = item.dest;
+							if (typeof dest === "string")
+								dest = await pdfDoc.getDestination(dest);
+							if (!Array.isArray(dest) || dest.length === 0) return;
+							const pageIdx = await pdfDoc.getPageIndex(
+								dest[0] as PdfRefProxy,
+							);
+							this.scrollToPage(pageIdx + 1);
+						} catch {
+							// Destination lookup failed — silently ignore
+						}
+					})();
 				});
 			}
 		};
