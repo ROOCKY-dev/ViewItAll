@@ -1013,11 +1013,75 @@ thead .via-sheet-row-num {
     transition: transform 0.15s ease;
 }
 
+.via-pptx-slide--canvas {
+    position: relative;
+    overflow: hidden;
+    padding: 0;
+    gap: 0;
+}
+
+.via-pptx-slide[data-slide-bg='lt1'] { background: var(--background-primary); }
+.via-pptx-slide[data-slide-bg='lt2'] { background: var(--background-secondary); }
+.via-pptx-slide[data-slide-bg='dk1'] { background: var(--background-primary-alt); }
+.via-pptx-slide[data-slide-bg='dk2'] { background: var(--background-secondary-alt); }
+
+.via-pptx-table-wrap {
+    width: fit-content;
+    max-width: 100%;
+    overflow: auto;
+    border-radius: var(--radius-s);
+    border: 1px solid var(--background-modifier-border);
+}
+
+.via-pptx-table {
+    border-collapse: collapse;
+    font-size: var(--font-ui-small);
+    color: var(--text-normal);
+    min-width: 360px;
+}
+
+.via-pptx-table th,
+.via-pptx-table td {
+    border: 1px solid var(--background-modifier-border);
+    padding: var(--size-4-1) var(--size-4-2);
+    text-align: left;
+    vertical-align: top;
+}
+
+.via-pptx-table th {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    font-weight: 600;
+}
+
+.via-pptx-table td {
+    background: var(--background-primary);
+}
+
 .via-pptx-slide-img {
     max-width: 100%;
     border-radius: var(--radius-s);
     display: block;
     margin: 0 auto;
+}
+
+.via-pptx-slide-picture {
+    position: absolute;
+    object-fit: fill;
+    pointer-events: none;
+}
+
+.via-pptx-library-renderer {
+    width: 100%;
+    max-width: 960px;
+    min-height: 540px;
+    padding: 0;
+    overflow: auto;
+}
+
+.via-pptx-library-host {
+    width: 100%;
+    min-height: 540px;
 }
 
 /* ── PPTX shape blocks ────────────────────────────────────────────── */

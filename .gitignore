@@ -36,7 +36,10 @@ dist/
 coverage/
 .env
 .env.*
-.Agent/
+agents/
+agents/AGENT.md
+agents/DECISION.md
+agents/STATUS.md
 
 # Release workflow temporary files
 *.zip
