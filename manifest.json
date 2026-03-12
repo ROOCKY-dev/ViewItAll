@@ -3,7 +3,7 @@
 	"name": "ViewItAll",
 	"version": "1.5.0",
 	"minAppVersion": "0.15.0",
-	"description": "View and edit MS Word (.docx) and PDF files directly inside Obsidian — no external apps needed.",
+	"description": "Open and edit PDF, Word, Excel, CSV, and PowerPoint files directly inside Obsidian.",
 	"author": "ROOCKY.dev",
 	"authorUrl": "https://roocky.dev",
 	"fundingUrl": "https://ko-fi.com/r00cky",
