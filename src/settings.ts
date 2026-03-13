@@ -129,7 +129,7 @@ export class ViewItAllSettingTab extends PluginSettingTab {
 			cls: "setting-item-description",
 		});
 
-		new Setting(containerEl).setName("PDF files (.pdf)").addToggle((t) =>
+		new Setting(containerEl).setName("PDF").addToggle((t) =>
 			t.setValue(this.plugin.settings.enablePdf).onChange(async (v) => {
 				this.plugin.settings.enablePdf = v;
 				await this.plugin.saveSettings();
@@ -150,14 +150,14 @@ export class ViewItAllSettingTab extends PluginSettingTab {
 			}),
 		);
 
-		new Setting(containerEl).setName("CSV files (.csv)").addToggle((t) =>
+		new Setting(containerEl).setName("CSV").addToggle((t) =>
 			t.setValue(this.plugin.settings.enableCsv).onChange(async (v) => {
 				this.plugin.settings.enableCsv = v;
 				await this.plugin.saveSettings();
 			}),
 		);
 
-		new Setting(containerEl).setName("PowerPoint files (.pptx)").addToggle((t) =>
+		new Setting(containerEl).setName("Presentations (.pptx)").addToggle((t) =>
 			t.setValue(this.plugin.settings.enablePptx).onChange(async (v) => {
 				this.plugin.settings.enablePptx = v;
 				await this.plugin.saveSettings();
@@ -243,7 +243,7 @@ export class ViewItAllSettingTab extends PluginSettingTab {
 			);
 
 		// ── PowerPoint ────────────────────────────────────────────────────
-		new Setting(containerEl).setName("PowerPoint files (.pptx)").setHeading();
+		new Setting(containerEl).setName("Presentations (.pptx)").setHeading();
 
 		new Setting(containerEl)
 			.setName("Toolbar position")
@@ -263,7 +263,7 @@ export class ViewItAllSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Renderer mode")
 			.setDesc(
-				"Choose PPTX rendering engine. Library mode prioritizes visual fidelity; custom mode keeps in-plugin editable shape pipeline.",
+				"Choose the pptx rendering engine. Library mode prioritizes visual fidelity; custom mode keeps the in-plugin editable shape pipeline.",
 			)
 			.addDropdown((dd) =>
 				dd

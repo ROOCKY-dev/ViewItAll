@@ -77,7 +77,7 @@ export class PptxView extends FileView {
 
 		const toolbar = this.contentEl.createDiv("via-pptx-toolbar");
 
-		const prevBtn = toolbar.createEl("button", { text: "◀ Previous" });
+		const prevBtn = toolbar.createEl("button", { text: "◀ previous" });
 		prevBtn.addEventListener("click", () => { void this.prevSlide(); });
 
 		const nextBtn = toolbar.createEl("button", { text: "Next ▶" });

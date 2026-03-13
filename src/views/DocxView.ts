@@ -176,7 +176,7 @@ export class DocxView extends FileView {
 		const current = this.undoStack.pop()!;
 		this.redoStack.push(current);
 		const prev = this.undoStack[this.undoStack.length - 1]!;
-		this.contentDiv.innerHTML = prev;
+		this.setContentFromHtml(this.contentDiv, prev);
 		this.setDirty(this.undoStack.length > 1);
 	}
 
@@ -184,7 +184,7 @@ export class DocxView extends FileView {
 		if (!this.contentDiv || this.redoStack.length === 0) return;
 		const next = this.redoStack.pop()!;
 		this.undoStack.push(next);
-		this.contentDiv.innerHTML = next;
+		this.setContentFromHtml(this.contentDiv, next);
 		this.setDirty(true);
 	}
 
@@ -212,6 +212,15 @@ export class DocxView extends FileView {
 		this.isDirty = dirty;
 		if (this.dirtyIndicator)
 			this.dirtyIndicator.classList.toggle("via-hidden", !dirty);
+	}
+
+	/** Replace an element's children with parsed HTML without using innerHTML. */
+	private setContentFromHtml(el: HTMLElement, html: string): void {
+		el.empty();
+		const parsed = new DOMParser().parseFromString(html, "text/html");
+		while (parsed.body.firstChild) {
+			el.appendChild(el.ownerDocument.importNode(parsed.body.firstChild, true));
+		}
 	}
 
 	private async saveFile(): Promise<void> {
