@@ -23,6 +23,8 @@ export class DocxView extends FileView {
 	private redoBtn: HTMLElement | null = null;
 	private dirtyIndicator: HTMLElement | null = null;
 	private currentFile: TFile | null = null;
+	private undoStack: string[] = [];
+	private redoStack: string[] = [];
 
 	constructor(leaf: WorkspaceLeaf, plugin: ViewItAllPlugin) {
 		super(leaf);
@@ -50,7 +52,8 @@ export class DocxView extends FileView {
 		await this.renderFile(file);
 	}
 
-	async onUnloadFile(_file: TFile): Promise<void> {
+	// No async work needed — returns resolved promise for type compatibility
+	onUnloadFile(_file: TFile): Promise<void> {
 		this.contentEl.empty();
 		this.contentDiv = null;
 		this.editToggleBtn = null;
@@ -58,6 +61,7 @@ export class DocxView extends FileView {
 		this.undoBtn = null;
 		this.redoBtn = null;
 		this.dirtyIndicator = null;
+		return Promise.resolve();
 	}
 
 	private async renderFile(file: TFile): Promise<void> {
@@ -93,24 +97,19 @@ export class DocxView extends FileView {
 		this.undoBtn = toolbar.createEl("div", { cls: "clickable-icon" });
 		setIcon(this.undoBtn, "undo-2");
 		setTooltip(this.undoBtn, "Undo (Ctrl+Z)");
-		this.undoBtn.style.display = this.editMode ? "" : "none";
-		this.undoBtn.addEventListener("click", () =>
-			document.execCommand("undo"),
-		);
+		this.undoBtn.classList.toggle("via-hidden", !this.editMode);
+		this.undoBtn.addEventListener("click", () => this.undo());
 
 		this.redoBtn = toolbar.createEl("div", { cls: "clickable-icon" });
 		setIcon(this.redoBtn, "redo-2");
 		setTooltip(this.redoBtn, "Redo (Ctrl+Shift+Z)");
-		this.redoBtn.style.display = this.editMode ? "" : "none";
-		this.redoBtn.addEventListener("click", () =>
-			document.execCommand("redo"),
-		);
+		this.redoBtn.classList.toggle("via-hidden", !this.editMode);
+		this.redoBtn.addEventListener("click", () => this.redo());
 
 		// Dirty indicator (yellow dot when unsaved changes exist)
 		this.dirtyIndicator = toolbar.createEl("div", {
-			cls: "via-docx-dirty-dot",
+			cls: "via-docx-dirty-dot via-hidden",
 		});
-		this.dirtyIndicator.style.display = "none";
 		setTooltip(this.dirtyIndicator, "Unsaved changes");
 
 		// Spacer
@@ -122,7 +121,7 @@ export class DocxView extends FileView {
 		});
 		setIcon(this.saveBtn, "save");
 		setTooltip(this.saveBtn, "Save (overwrite original)");
-		this.saveBtn.style.display = this.editMode ? "" : "none";
+		this.saveBtn.classList.toggle("via-hidden", !this.editMode);
 		this.saveBtn.addEventListener("click", () => { void this.saveFile(); });
 
 		// ── Conversion warnings ────────────────────────────────────────────
@@ -141,18 +140,52 @@ export class DocxView extends FileView {
 
 		if (messages.length > 0) {
 			const warn = scrollEl.createEl("div", { cls: "via-warning" });
-			warn.createEl("strong", { text: "⚠️ Conversion notes: " });
+			warn.createEl("strong", { text: "Conversion notes: " });
 			warn.createEl("span", { text: messages.join("; ") });
 		}
 
 		// ── Content ────────────────────────────────────────────────────────
 		this.contentDiv = scrollEl.createEl("div", { cls: "via-docx-content" });
-		this.contentDiv.innerHTML = html;
+		const parser = new DOMParser();
+		const parsed = parser.parseFromString(html, "text/html");
+		while (parsed.body.firstChild) {
+			this.contentDiv.appendChild(
+				this.contentDiv.ownerDocument.importNode(
+					parsed.body.firstChild,
+					true,
+				),
+			);
+		}
 		this.contentDiv.contentEditable = this.editMode ? "true" : "false";
 		if (this.editMode) this.contentDiv.classList.add("via-editable");
 
-		// Track dirty state
-		this.contentDiv.addEventListener("input", () => this.setDirty(true));
+		// Track dirty state and undo history
+		this.undoStack = [html];
+		this.redoStack = [];
+		this.contentDiv.addEventListener("input", () => {
+			this.setDirty(true);
+			if (this.contentDiv) {
+				this.undoStack.push(this.contentDiv.innerHTML);
+				this.redoStack = [];
+			}
+		});
+	}
+
+	private undo(): void {
+		if (!this.contentDiv || this.undoStack.length <= 1) return;
+		const current = this.undoStack.pop()!;
+		this.redoStack.push(current);
+		const prev = this.undoStack[this.undoStack.length - 1]!;
+		this.contentDiv.innerHTML = prev;
+		this.setDirty(this.undoStack.length > 1);
+	}
+
+	private redo(): void {
+		if (!this.contentDiv || this.redoStack.length === 0) return;
+		const next = this.redoStack.pop()!;
+		this.undoStack.push(next);
+		this.contentDiv.innerHTML = next;
+		this.setDirty(true);
 	}
 
 	private toggleEdit(): void {
@@ -166,11 +199,11 @@ export class DocxView extends FileView {
 			this.editMode ? "Switch to view mode" : "Switch to edit mode",
 		);
 		this.editToggleBtn.classList.toggle("is-active", this.editMode);
-		this.saveBtn.style.display = this.editMode ? "" : "none";
+		this.saveBtn.classList.toggle("via-hidden", !this.editMode);
 		if (this.undoBtn)
-			this.undoBtn.style.display = this.editMode ? "" : "none";
+			this.undoBtn.classList.toggle("via-hidden", !this.editMode);
 		if (this.redoBtn)
-			this.redoBtn.style.display = this.editMode ? "" : "none";
+			this.redoBtn.classList.toggle("via-hidden", !this.editMode);
 		// Hide dirty indicator when leaving edit mode without saving
 		if (!this.editMode) this.setDirty(false);
 	}
@@ -178,7 +211,7 @@ export class DocxView extends FileView {
 	private setDirty(dirty: boolean): void {
 		this.isDirty = dirty;
 		if (this.dirtyIndicator)
-			this.dirtyIndicator.style.display = dirty ? "" : "none";
+			this.dirtyIndicator.classList.toggle("via-hidden", !dirty);
 	}
 
 	private async saveFile(): Promise<void> {
@@ -197,9 +230,9 @@ export class DocxView extends FileView {
 			const buffer = await saveHtmlAsDocx(this.contentDiv.innerHTML);
 			await this.app.vault.modifyBinary(this.currentFile, buffer);
 			this.setDirty(false);
-			new Notice(`✅ Saved "${this.currentFile.name}"`);
+			new Notice(`Saved "${this.currentFile.name}"`);
 		} catch (err) {
-			new Notice(`❌ Save failed: ${String(err)}`);
+			new Notice(`Save failed: ${String(err)}`);
 		}
 	}
 }
@@ -241,10 +274,8 @@ class ConfirmModal extends Modal {
 			});
 		const overwriteBtn = btnRow.createEl("button", {
 			text: "Overwrite",
-			cls: "mod-cta",
+			cls: "mod-cta via-btn-danger",
 		});
-		overwriteBtn.style.cssText =
-			"background: var(--color-red); border-color: var(--color-red);";
 		overwriteBtn.addEventListener("click", () => {
 			this.resolve(true);
 			this.close();

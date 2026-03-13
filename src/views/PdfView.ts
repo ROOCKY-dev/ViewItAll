@@ -30,7 +30,6 @@ import type { SnapDirection } from "../settings";
 
 // Virtual module resolved by esbuild's pdfWorkerPlugin — inlines the pdf.js worker.
 declare const require: (id: string) => string;
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const _pdfWorkerSrc: string = require("pdfjs-worker-src");
 let _workerBlobUrl: string | null = null;
 function getPdfWorkerUrl(): string {
@@ -44,6 +43,13 @@ function getPdfWorkerUrl(): string {
 }
 
 type AnnotTool = "none" | "pen" | "highlighter" | "eraser" | "note";
+
+interface PdfOutlineItem {
+	title: string;
+	dest: string | unknown[] | null;
+	items: PdfOutlineItem[];
+}
+
 // PageRenderState imported from pdfTypes
 
 export class PdfView extends FileView {
@@ -101,6 +107,7 @@ export class PdfView extends FileView {
 	private bodyEl: HTMLElement | null = null;
 	private tocSidebarEl: HTMLElement | null = null;
 	private tocVisible = false;
+	private _outline: PdfOutlineItem[] = [];
 
 	// Text notes overlay (keyed by note id)
 	private noteEls = new Map<string, HTMLElement>();
@@ -272,7 +279,8 @@ export class PdfView extends FileView {
 		await this.renderPdf(file);
 	}
 
-	async onUnloadFile(_file: TFile): Promise<void> {
+	// No async work needed — returns resolved promise for type compatibility
+	onUnloadFile(_file: TFile): Promise<void> {
 		this._renderGen++;
 		this.hideColorPopover();
 		if (this._zoomDebounceTimer !== null) {
@@ -296,6 +304,7 @@ export class PdfView extends FileView {
 		this.snapDirBtnEl = null;
 		this.colorDotBtnEl = null;
 		this.contentEl.empty();
+		return Promise.resolve();
 	}
 
 	private async renderPdf(file: TFile): Promise<void> {
@@ -404,7 +413,7 @@ export class PdfView extends FileView {
 			.then(() => {
 				if (
 					this.plugin.settings.showTocOnOpen &&
-					((this as any))._outline?.length > 0
+					this._outline?.length > 0
 				) {
 					this.toggleToc();
 				}
@@ -1082,13 +1091,13 @@ export class PdfView extends FileView {
 		input.className = "via-pdf-page-jump-input";
 
 		indicator.parentElement!.insertBefore(input, indicator);
-		indicator.style.display = "none";
+		indicator.classList.add("via-hidden");
 		input.focus();
 		input.select();
 
 		const cleanup = () => {
 			input.remove();
-			indicator.style.display = "";
+			indicator.classList.remove("via-hidden");
 		};
 		const commit = () => {
 			const val = parseInt(input.value, 10);
@@ -1303,9 +1312,9 @@ export class PdfView extends FileView {
 		if (!this.currentFile) return;
 		try {
 			await saveAnnotations(this.app, this.currentFile, this.annotData);
-			new Notice("\u2705 Annotations saved");
+			new Notice("Annotations saved");
 		} catch (err) {
-			new Notice(`\u274c Failed to save annotations: ${String(err)}`);
+			new Notice(`Failed to save annotations: ${String(err)}`);
 		}
 	}
 
@@ -1316,7 +1325,7 @@ export class PdfView extends FileView {
 		try {
 			const outline = await this.pdfDoc.getOutline();
 			if (!outline || outline.length === 0) return;
-			((this as any))._outline = outline;
+			this._outline = outline;
 		} catch {
 			// Some PDFs throw on getOutline — ignore
 		}
@@ -1348,7 +1357,7 @@ export class PdfView extends FileView {
 		});
 
 		const list = sidebar.createEl("div", { cls: "via-pdf-toc-list" });
-		const outline = ((this as any))._outline as any[];
+		const outline = this._outline;
 
 		if (!outline || outline.length === 0) {
 			list.createEl("p", {
@@ -1381,7 +1390,7 @@ export class PdfView extends FileView {
 					toggle.addEventListener("click", (e) => {
 						e.stopPropagation();
 						collapsed = !collapsed;
-						childList.style.display = collapsed ? "none" : "";
+						childList.classList.toggle("via-hidden", collapsed);
 						toggle.textContent = collapsed ? "▸" : "▾";
 					});
 				}

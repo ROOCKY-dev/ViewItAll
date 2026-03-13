@@ -7,6 +7,10 @@
 
 .via-toolbar-spacer { flex: 1; }
 
+.via-hidden { display: none; }
+
+.via-separator-faint { opacity: 0.3; }
+
 .via-toolbar-sep {
     width: 1px;
     height: 18px;
@@ -185,6 +189,11 @@
     flex-shrink: 0;
     opacity: 0.9;
     cursor: default;
+}
+
+.via-btn-danger {
+    background: var(--color-red);
+    border-color: var(--color-red);
 }
 
 /* Document content area */
@@ -846,6 +855,31 @@
 
 thead .via-sheet-row-num {
     z-index: 3;
+}
+
+/* ── PPTX canvas wrapper ─────────────────────────────────────────── */
+
+.via-pptx-canvas-wrapper {
+    flex: 1;
+    overflow: auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 16px;
+    min-height: 0;
+    background: var(--background-secondary);
+}
+
+.via-pptx-canvas {
+    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+    width: var(--via-canvas-width, auto);
+    height: var(--via-canvas-height, auto);
+}
+
+.via-pptx-zoom-label {
+    min-width: 40px;
+    text-align: center;
 }
 
 /* ── PowerPoint viewer ───────────────────────────────────────────────── */

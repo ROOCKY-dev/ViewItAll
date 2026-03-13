@@ -129,7 +129,7 @@ export class ViewItAllSettingTab extends PluginSettingTab {
 			cls: "setting-item-description",
 		});
 
-		new Setting(containerEl).setName("PDF (.pdf)").addToggle((t) =>
+		new Setting(containerEl).setName("PDF files (.pdf)").addToggle((t) =>
 			t.setValue(this.plugin.settings.enablePdf).onChange(async (v) => {
 				this.plugin.settings.enablePdf = v;
 				await this.plugin.saveSettings();
@@ -150,14 +150,14 @@ export class ViewItAllSettingTab extends PluginSettingTab {
 			}),
 		);
 
-		new Setting(containerEl).setName("CSV (.csv)").addToggle((t) =>
+		new Setting(containerEl).setName("CSV files (.csv)").addToggle((t) =>
 			t.setValue(this.plugin.settings.enableCsv).onChange(async (v) => {
 				this.plugin.settings.enableCsv = v;
 				await this.plugin.saveSettings();
 			}),
 		);
 
-		new Setting(containerEl).setName("PowerPoint (.pptx)").addToggle((t) =>
+		new Setting(containerEl).setName("PowerPoint files (.pptx)").addToggle((t) =>
 			t.setValue(this.plugin.settings.enablePptx).onChange(async (v) => {
 				this.plugin.settings.enablePptx = v;
 				await this.plugin.saveSettings();
@@ -243,7 +243,7 @@ export class ViewItAllSettingTab extends PluginSettingTab {
 			);
 
 		// ── PowerPoint ────────────────────────────────────────────────────
-		new Setting(containerEl).setName("PowerPoint (.pptx)").setHeading();
+		new Setting(containerEl).setName("PowerPoint files (.pptx)").setHeading();
 
 		new Setting(containerEl)
 			.setName("Toolbar position")

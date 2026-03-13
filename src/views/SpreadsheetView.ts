@@ -133,7 +133,8 @@ export class SpreadsheetView extends FileView {
 		await this.renderFile(file);
 	}
 
-	async onUnloadFile(_file: TFile): Promise<void> {
+	// No async work needed — returns resolved promise for type compatibility
+	onUnloadFile(_file: TFile): Promise<void> {
 		this.contentEl.empty();
 		this.workbook = null;
 		this.savedData = null;
@@ -151,6 +152,7 @@ export class SpreadsheetView extends FileView {
 		this.infoEl = null;
 		this.currentFile = null;
 		this.editMode = false;
+		return Promise.resolve();
 	}
 
 	// ── Render ────────────────────────────────────────────────────────────────
@@ -222,21 +224,20 @@ export class SpreadsheetView extends FileView {
 		});
 		setIcon(this.saveBtn, "save");
 		setTooltip(this.saveBtn, "Save (Ctrl+S)");
-		this.saveBtn.style.display = "none";
+		this.saveBtn.classList.add("via-hidden");
 		this.saveBtn.addEventListener("click", () => { void this.saveFile(); });
 
 		// Undo (revert to last save)
 		this.undoBtn = toolbar.createEl("div", { cls: "clickable-icon" });
 		setIcon(this.undoBtn, "undo-2");
 		setTooltip(this.undoBtn, "Revert to last save");
-		this.undoBtn.style.display = "none";
+		this.undoBtn.classList.add("via-hidden");
 		this.undoBtn.addEventListener("click", () => this.revertToSaved());
 
 		// Dirty indicator (yellow dot)
 		this.dirtyIndicator = toolbar.createEl("div", {
-			cls: "via-docx-dirty-dot",
+			cls: "via-docx-dirty-dot via-hidden",
 		});
-		this.dirtyIndicator.style.display = "none";
 		setTooltip(this.dirtyIndicator, "Unsaved changes");
 
 		toolbar.createEl("div", { cls: "via-toolbar-sep" });
@@ -245,14 +246,14 @@ export class SpreadsheetView extends FileView {
 		this.addRowBtn = toolbar.createEl("div", { cls: "clickable-icon" });
 		setIcon(this.addRowBtn, "plus-square");
 		setTooltip(this.addRowBtn, "Add row at bottom");
-		this.addRowBtn.style.display = "none";
+		this.addRowBtn.classList.add("via-hidden");
 		this.addRowBtn.addEventListener("click", () => this.addRow());
 
 		// Add Column
 		this.addColBtn = toolbar.createEl("div", { cls: "clickable-icon" });
 		setIcon(this.addColBtn, "between-vertical-start");
 		setTooltip(this.addColBtn, "Add column at right");
-		this.addColBtn.style.display = "none";
+		this.addColBtn.classList.add("via-hidden");
 		this.addColBtn.addEventListener("click", () => this.addColumn());
 
 		toolbar.createEl("div", { cls: "via-toolbar-sep" });
@@ -649,11 +650,11 @@ export class SpreadsheetView extends FileView {
 		this.editToggleBtn.classList.toggle("is-active", this.editMode);
 
 		// Show/hide edit-only toolbar buttons
-		const display = this.editMode ? "" : "none";
-		if (this.saveBtn) this.saveBtn.style.display = display;
-		if (this.undoBtn) this.undoBtn.style.display = display;
-		if (this.addRowBtn) this.addRowBtn.style.display = display;
-		if (this.addColBtn) this.addColBtn.style.display = display;
+		const hidden = !this.editMode;
+		if (this.saveBtn) this.saveBtn.classList.toggle("via-hidden", hidden);
+		if (this.undoBtn) this.undoBtn.classList.toggle("via-hidden", hidden);
+		if (this.addRowBtn) this.addRowBtn.classList.toggle("via-hidden", hidden);
+		if (this.addColBtn) this.addColBtn.classList.toggle("via-hidden", hidden);
 
 		// Hide dirty indicator when leaving edit mode
 		if (!this.editMode) {
@@ -930,7 +931,7 @@ export class SpreadsheetView extends FileView {
 	private setDirty(dirty: boolean): void {
 		this.isDirty = dirty;
 		if (this.dirtyIndicator)
-			this.dirtyIndicator.style.display = dirty ? "" : "none";
+			this.dirtyIndicator.classList.toggle("via-hidden", !dirty);
 		if (!dirty) this.saveBtn?.classList.remove("is-dirty");
 	}
 
@@ -1042,10 +1043,8 @@ class ConfirmModal extends Modal {
 			});
 		const overwriteBtn = btnRow.createEl("button", {
 			text: "Overwrite",
-			cls: "mod-cta",
+			cls: "mod-cta via-btn-danger",
 		});
-		overwriteBtn.style.cssText =
-			"background: var(--color-red); border-color: var(--color-red);";
 		overwriteBtn.addEventListener("click", () => {
 			this.resolve(true);
 			this.close();

@@ -3,6 +3,39 @@ import { PPTXViewer } from "pptxviewjs";
 import { VIEW_TYPE_PPTX } from "../types";
 import ViewItAllPlugin from "../main";
 
+// Internal pptxviewjs types for patching theme colors
+interface PptxColor {
+	scheme?: string;
+	tint?: number;
+	shade?: number;
+	lumMod?: number;
+	lumOff?: number;
+}
+
+interface PptxDrawingDocument {
+	parseColorToHex: (color: unknown) => string;
+	applyColorModifications?: (hex: string, color: unknown) => string;
+}
+
+interface PptxSlide {
+	theme?: Record<string, unknown>;
+	layout?: { master?: { theme?: Record<string, unknown> } };
+}
+
+interface PptxRenderer {
+	presentation?: {
+		theme?: { colors?: Record<string, string> };
+	};
+	slides?: PptxSlide[];
+	drawingDocument?: PptxDrawingDocument;
+	getSlideDimensions?: () => { cx: number; cy: number } | undefined;
+}
+
+interface PptxProcessor {
+	processor?: PptxRenderer;
+	getSlideDimensions?: () => { cx: number; cy: number } | undefined;
+}
+
 export class PptxView extends FileView {
 	private plugin: ViewItAllPlugin;
 	private viewer: PPTXViewer | null = null;
@@ -40,29 +73,20 @@ export class PptxView extends FileView {
 	}
 
 	private buildUI() {
-		Object.assign(this.contentEl.style, {
-			display: "flex",
-			flexDirection: "column",
-			height: "100%",
-		});
+		this.contentEl.classList.add("via-pptx-wrapper");
 
 		const toolbar = this.contentEl.createDiv("via-pptx-toolbar");
-		Object.assign(toolbar.style, {
-			display: "flex",
-			alignItems: "center",
-			gap: "8px",
-			padding: "6px 12px",
-			borderBottom: "1px solid var(--background-modifier-border)",
-			flexShrink: "0",
-		});
 
-		const prevBtn = toolbar.createEl("button", { text: "◀ Prev" });
+		const prevBtn = toolbar.createEl("button", { text: "◀ Previous" });
 		prevBtn.addEventListener("click", () => { void this.prevSlide(); });
 
 		const nextBtn = toolbar.createEl("button", { text: "Next ▶" });
 		nextBtn.addEventListener("click", () => { void this.nextSlide(); });
 
-		toolbar.createEl("span", { text: "|" }).style.opacity = "0.3";
+		toolbar.createEl("span", {
+			text: "|",
+			cls: "via-separator-faint",
+		});
 
 		const zoomOutBtn = toolbar.createEl("button", { text: "−" });
 		zoomOutBtn.addEventListener("click", () => {
@@ -73,10 +97,6 @@ export class PptxView extends FileView {
 			text: "100%",
 			cls: "via-pptx-zoom-label",
 		});
-		Object.assign(this.zoomLabel.style, {
-			minWidth: "40px",
-			textAlign: "center",
-		});
 
 		const zoomInBtn = toolbar.createEl("button", { text: "+" });
 		zoomInBtn.addEventListener("click", () => {
@@ -86,7 +106,10 @@ export class PptxView extends FileView {
 		const fitBtn = toolbar.createEl("button", { text: "Fit" });
 		fitBtn.addEventListener("click", () => { void this.fitToContainer(); });
 
-		toolbar.createEl("span", { text: "|" }).style.opacity = "0.3";
+		toolbar.createEl("span", {
+			text: "|",
+			cls: "via-separator-faint",
+		});
 
 		this.statusEl = toolbar.createEl("span", { cls: "via-pptx-status" });
 		this.statusEl.setText("Loading...");
@@ -94,23 +117,9 @@ export class PptxView extends FileView {
 		this.canvasWrapper = this.contentEl.createDiv(
 			"via-pptx-canvas-wrapper",
 		);
-		Object.assign(this.canvasWrapper.style, {
-			flex: "1",
-			overflow: "auto",
-			display: "flex",
-			justifyContent: "center",
-			alignItems: "center",
-			padding: "16px",
-			minHeight: "0",
-			background: "var(--background-secondary)",
-		});
 
 		this.canvasEl = this.canvasWrapper.createEl("canvas", {
 			cls: "via-pptx-canvas",
-		});
-		Object.assign(this.canvasEl.style, {
-			boxShadow: "0 2px 16px rgba(0,0,0,0.2)",
-			borderRadius: "4px",
 		});
 	}
 
@@ -145,14 +154,15 @@ export class PptxView extends FileView {
 	 */
 	private patchThemeColors() {
 		try {
-			const v = this.viewer as unknown;
-			const outerProc = (v as any)?.processor;
+			const v = this.viewer as unknown as { processor?: PptxProcessor };
+			const outerProc = v?.processor;
 			const renderer = outerProc?.processor;
 			if (!renderer) return;
 
 			const presentation = renderer.presentation;
+			if (!presentation) return;
 			const themeColors: Record<string, string> | undefined =
-				presentation?.theme?.colors;
+				presentation.theme?.colors;
 			if (!themeColors) return;
 
 			// 1. Propagate theme onto every slide so bgRef / currentSlide.theme works
@@ -176,16 +186,17 @@ export class PptxView extends FileView {
 				if (typeof color === "string") {
 					return color.startsWith("#") ? color : `#${color}`;
 				}
-				if ((color as any).scheme && themeColors[(color as any).scheme]) {
-					let hex = themeColors[(color as any).scheme];
+				const c = color as PptxColor;
+				if (c.scheme && themeColors[c.scheme]) {
+					let hex = themeColors[c.scheme];
 					if (typeof hex === "string") {
 						if (!hex.startsWith("#")) hex = `#${hex}`;
 						// Apply tint / shade / lumMod / lumOff modifications
 						if (
-							(color as any).tint !== undefined ||
-							(color as any).shade !== undefined ||
-							(color as any).lumMod !== undefined ||
-							(color as any).lumOff !== undefined
+							c.tint !== undefined ||
+							c.shade !== undefined ||
+							c.lumMod !== undefined ||
+							c.lumOff !== undefined
 						) {
 							if (
 								typeof drawDoc.applyColorModifications ===
@@ -209,7 +220,7 @@ export class PptxView extends FileView {
 
 	private readSlideDimensions() {
 		try {
-			const proc = ((this.viewer as any))?.processor;
+			const proc = (this.viewer as unknown as { processor?: PptxProcessor })?.processor;
 			const dims =
 				proc?.getSlideDimensions?.() ??
 				proc?.processor?.getSlideDimensions?.();
@@ -261,8 +272,10 @@ export class PptxView extends FileView {
 
 			// Set only CSS dimensions — the library handles canvas.width/height
 			// and DPR scaling internally via its init() method
-			this.canvasEl.style.width = `${cssW}px`;
-			this.canvasEl.style.height = `${cssH}px`;
+			this.canvasEl.setCssProps({
+				"--via-canvas-width": `${cssW}px`,
+				"--via-canvas-height": `${cssH}px`,
+			});
 
 			await this.viewer.render(this.canvasEl);
 		} finally {
@@ -309,7 +322,8 @@ export class PptxView extends FileView {
 		await this.renderCurrentSlide();
 	}
 
-	protected async onClose() {
+	// No async work needed — returns resolved promise for type compatibility
+	protected onClose(): Promise<void> {
 		this.resizeObserver?.disconnect();
 		this.resizeObserver = null;
 		this.viewer?.destroy();
@@ -319,5 +333,6 @@ export class PptxView extends FileView {
 		this.statusEl = null;
 		this.zoomLabel = null;
 		this.contentEl.empty();
+		return Promise.resolve();
 	}
 }

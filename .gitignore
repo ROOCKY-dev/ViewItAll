@@ -42,7 +42,7 @@ agents/DECISION.md
 agents/STATUS.md
 scripts/
 scripts/check-css.js
-
+AGENTS.md
 # Release workflow temporary files
 *.zip
 *.tar.gz
