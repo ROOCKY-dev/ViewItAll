@@ -1,6 +1,6 @@
 {
 	"name": "viewitall-md",
-	"version": "2.0.0",
+	"version": "2.0.1",
 	"description": "View and edit Word documents (.docx) natively in Obsidian.",
 	"main": "main.js",
 	"scripts": {

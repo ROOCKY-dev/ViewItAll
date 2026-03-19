@@ -24,9 +24,7 @@ import {
 	NS_R,
 	NS_WP,
 	NS_A,
-	NS_PIC,
 	getElement,
-	getElements,
 	getDirectChild,
 	getDirectChildren,
 	getVal,
@@ -40,9 +38,18 @@ import { parseStyles, parseParagraphProperties, parseRunProperties } from "./sty
 import { parseNumbering } from "./numbering";
 
 /**
+ * Result of parsing a .docx file — includes both the document model
+ * and the raw JSZip instance for round-trip serialization.
+ */
+export interface ParseResult {
+	doc: DocxDocument;
+	zip: unknown; // JSZip instance, typed as unknown to avoid top-level import
+}
+
+/**
  * Parse a .docx ArrayBuffer into a DocxDocument model.
  */
-export async function parseDocx(data: ArrayBuffer): Promise<DocxDocument> {
+export async function parseDocx(data: ArrayBuffer): Promise<ParseResult> {
 	// Dynamic import — JSZip is a heavy lib
 	const JSZip = (await import("jszip")).default;
 	const zip = await JSZip.loadAsync(data);
@@ -95,11 +102,14 @@ export async function parseDocx(data: ArrayBuffer): Promise<DocxDocument> {
 	const body = parseBody(bodyEl, relationships);
 
 	return {
-		body,
-		styles,
-		images,
-		numbering,
-		relationships: relMap,
+		doc: {
+			body,
+			styles,
+			images,
+			numbering,
+			relationships: relMap,
+		},
+		zip,
 	};
 }
 
