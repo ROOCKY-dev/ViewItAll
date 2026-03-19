@@ -1,30 +1,27 @@
-import {
-	FileView,
-	TFile,
-	WorkspaceLeaf,
-	Notice,
-	Modal,
-	App,
-	setIcon,
-	setTooltip,
-} from "obsidian";
-import { VIEW_TYPE_DOCX } from "../types";
-import { readDocxAsHtml, saveHtmlAsDocx } from "../utils/docxUtils";
+/**
+ * ViewItAll — DocxView
+ *
+ * FileView subclass that renders .docx files natively using the
+ * OOXML parser + DOM renderer pipeline.
+ */
+
+import { FileView, Notice, TFile, WorkspaceLeaf, setIcon, setTooltip } from "obsidian";
 import type ViewItAllPlugin from "../main";
+import { VIEW_TYPE_DOCX } from "../types";
+import type { DocxDocument } from "../docx/model";
+import { parseDocx } from "../docx/parser";
+import { renderDocument } from "../docx/renderer";
 
 export class DocxView extends FileView {
-	private plugin: ViewItAllPlugin;
-	private editMode = false;
-	private isDirty = false;
-	private contentDiv: HTMLElement | null = null;
-	private editToggleBtn: HTMLElement | null = null;
-	private saveBtn: HTMLElement | null = null;
-	private undoBtn: HTMLElement | null = null;
-	private redoBtn: HTMLElement | null = null;
-	private dirtyIndicator: HTMLElement | null = null;
-	private currentFile: TFile | null = null;
-	private undoStack: string[] = [];
-	private redoStack: string[] = [];
+	plugin: ViewItAllPlugin;
+
+	private wrapperEl: HTMLElement | null = null;
+	private toolbarEl: HTMLElement | null = null;
+	private scrollEl: HTMLElement | null = null;
+	private contentEl_: HTMLElement | null = null;
+	private blobUrls: string[] = [];
+	private docModel: DocxDocument | null = null;
+	private currentZoom = 1.0;
 
 	constructor(leaf: WorkspaceLeaf, plugin: ViewItAllPlugin) {
 		super(leaf);
@@ -34,264 +31,156 @@ export class DocxView extends FileView {
 	getViewType(): string {
 		return VIEW_TYPE_DOCX;
 	}
+
 	getDisplayText(): string {
-		return this.file?.basename ?? "Word Document";
+		return this.file?.basename ?? "Word document";
 	}
+
 	getIcon(): string {
 		return "file-text";
 	}
 
-	canAcceptExtension(extension: string): boolean {
-		return extension === "docx";
-	}
-
 	async onLoadFile(file: TFile): Promise<void> {
-		this.currentFile = file;
-		this.editMode = this.plugin.settings.docxDefaultEditMode;
-		this.isDirty = false;
-		await this.renderFile(file);
-	}
+		const s = this.plugin.settings;
+		this.currentZoom = s.docxDefaultZoom;
 
-	// No async work needed — returns resolved promise for type compatibility
-	onUnloadFile(_file: TFile): Promise<void> {
-		this.contentEl.empty();
-		this.contentDiv = null;
-		this.editToggleBtn = null;
-		this.saveBtn = null;
-		this.undoBtn = null;
-		this.redoBtn = null;
-		this.dirtyIndicator = null;
-		return Promise.resolve();
-	}
-
-	private async renderFile(file: TFile): Promise<void> {
+		// Clear previous content
 		this.contentEl.empty();
 
-		const isBottom = this.plugin.settings.docxToolbarPosition === "bottom";
-
-		// Wrapper — flex column so toolbar can be ordered top or bottom
-		const wrapper = this.contentEl.createEl("div", {
-			cls: "via-docx-wrapper",
+		// Build layout
+		const isBottom = s.docxToolbarPosition === "bottom";
+		this.wrapperEl = this.contentEl.createEl("div", {
+			cls: `via-docx-wrapper${isBottom ? " via-docx-wrapper--toolbar-bottom" : ""}`,
 		});
-		if (isBottom) wrapper.classList.add("via-docx-wrapper--toolbar-bottom");
 
-		// Scroll container
-		const scrollEl = wrapper.createEl("div", { cls: "via-docx-scroll" });
-
-		// ── Toolbar ────────────────────────────────────────────────────────
-		const toolbar = wrapper.createEl("div", { cls: "via-docx-toolbar" });
-
-		// Edit / View toggle
-		this.editToggleBtn = toolbar.createEl("div", { cls: "clickable-icon" });
-		setIcon(this.editToggleBtn, this.editMode ? "eye" : "pencil");
-		setTooltip(
-			this.editToggleBtn,
-			this.editMode ? "Switch to view mode" : "Switch to edit mode",
-		);
-		this.editToggleBtn.classList.toggle("is-active", this.editMode);
-		this.editToggleBtn.addEventListener("click", () => this.toggleEdit());
-
-		toolbar.createEl("div", { cls: "via-toolbar-sep" });
-
-		// Undo / redo (visible in edit mode only)
-		this.undoBtn = toolbar.createEl("div", { cls: "clickable-icon" });
-		setIcon(this.undoBtn, "undo-2");
-		setTooltip(this.undoBtn, "Undo (Ctrl+Z)");
-		this.undoBtn.classList.toggle("via-hidden", !this.editMode);
-		this.undoBtn.addEventListener("click", () => this.undo());
-
-		this.redoBtn = toolbar.createEl("div", { cls: "clickable-icon" });
-		setIcon(this.redoBtn, "redo-2");
-		setTooltip(this.redoBtn, "Redo (Ctrl+Shift+Z)");
-		this.redoBtn.classList.toggle("via-hidden", !this.editMode);
-		this.redoBtn.addEventListener("click", () => this.redo());
-
-		// Dirty indicator (yellow dot when unsaved changes exist)
-		this.dirtyIndicator = toolbar.createEl("div", {
-			cls: "via-docx-dirty-dot via-hidden",
+		this.toolbarEl = this.wrapperEl.createEl("div", {
+			cls: "via-docx-toolbar",
 		});
-		setTooltip(this.dirtyIndicator, "Unsaved changes");
+
+		this.scrollEl = this.wrapperEl.createEl("div", {
+			cls: "via-docx-scroll",
+		});
+
+		this.contentEl_ = this.scrollEl.createEl("div", {
+			cls: "via-docx-content",
+		});
+
+		// Build toolbar
+		this.buildToolbar();
+
+		// Apply initial zoom
+		this.applyZoom();
+
+		// Parse and render
+		try {
+			const data = await this.app.vault.readBinary(file);
+			this.docModel = await parseDocx(data);
+			this.blobUrls = renderDocument(this.docModel, this.contentEl_);
+		} catch (err: unknown) {
+			const msg = err instanceof Error ? err.message : String(err);
+			new Notice(`Failed to open .docx: ${msg}`);
+			this.contentEl_.createEl("div", {
+				cls: "via-error",
+				text: `Error loading document: ${msg}`,
+			});
+		}
+	}
+
+	async onUnloadFile(): Promise<void> {
+		// Revoke all blob URLs to prevent memory leaks
+		for (const url of this.blobUrls) {
+			URL.revokeObjectURL(url);
+		}
+		this.blobUrls = [];
+
+		// Clear DOM refs
+		this.contentEl.empty();
+		this.wrapperEl = null;
+		this.toolbarEl = null;
+		this.scrollEl = null;
+		this.contentEl_ = null;
+		this.docModel = null;
+	}
+
+	canAcceptExtension(extension: string): boolean {
+		return extension === "docx" && this.plugin.settings.enableDocx;
+	}
+
+	// ── Toolbar ─────────────────────────────────────────────────────────────
+
+	private buildToolbar(): void {
+		if (!this.toolbarEl) return;
+
+		// File name label
+		const fileLabel = this.toolbarEl.createEl("div", {
+			cls: "via-docx-file-label",
+		});
+		const fileIcon = fileLabel.createEl("div", { cls: "clickable-icon" });
+		setIcon(fileIcon, "file-text");
+		fileLabel.createEl("span", {
+			cls: "via-docx-file-name",
+			text: this.file?.name ?? "Untitled",
+		});
+
+		// Separator
+		this.toolbarEl.createEl("div", { cls: "via-toolbar-sep" });
+
+		// Zoom out
+		const zoomOut = this.toolbarEl.createEl("div", { cls: "clickable-icon" });
+		setIcon(zoomOut, "minus");
+		setTooltip(zoomOut, "Zoom out");
+		zoomOut.addEventListener("click", () => this.adjustZoom(-0.25));
+
+		// Zoom label
+		const zoomLabel = this.toolbarEl.createEl("button", {
+			cls: "via-btn via-btn-zoom-label",
+			text: this.formatZoom(),
+		});
+		setTooltip(zoomLabel, "Reset zoom");
+		zoomLabel.addEventListener("click", () => {
+			this.currentZoom = 1.0;
+			this.applyZoom();
+			zoomLabel.textContent = this.formatZoom();
+		});
+
+		// Zoom in
+		const zoomIn = this.toolbarEl.createEl("div", { cls: "clickable-icon" });
+		setIcon(zoomIn, "plus");
+		setTooltip(zoomIn, "Zoom in");
+		zoomIn.addEventListener("click", () => this.adjustZoom(0.25));
 
 		// Spacer
-		toolbar.createEl("div", { cls: "via-toolbar-spacer" });
+		this.toolbarEl.createEl("div", { cls: "via-toolbar-spacer" });
 
-		// Save button
-		this.saveBtn = toolbar.createEl("div", {
-			cls: "clickable-icon via-icon-save",
-		});
-		setIcon(this.saveBtn, "save");
-		setTooltip(this.saveBtn, "Save (overwrite original)");
-		this.saveBtn.classList.toggle("via-hidden", !this.editMode);
-		this.saveBtn.addEventListener("click", () => { void this.saveFile(); });
+		// Store zoom label ref for updates
+		this.zoomLabelEl = zoomLabel;
+	}
 
-		// ── Conversion warnings ────────────────────────────────────────────
-		let html: string;
-		let messages: string[];
-		try {
-			const buffer = await this.app.vault.adapter.readBinary(file.path);
-			({ html, messages } = await readDocxAsHtml(buffer));
-		} catch (err) {
-			scrollEl.createEl("p", {
-				cls: "via-error",
-				text: `Failed to read file: ${String(err)}`,
-			});
-			return;
+	private zoomLabelEl: HTMLElement | null = null;
+
+	private adjustZoom(delta: number): void {
+		const newZoom = Math.max(0.25, Math.min(3.0, this.currentZoom + delta));
+		this.currentZoom = newZoom;
+		this.applyZoom();
+		if (this.zoomLabelEl) {
+			this.zoomLabelEl.textContent = this.formatZoom();
 		}
+	}
 
-		if (messages.length > 0) {
-			const warn = scrollEl.createEl("div", { cls: "via-warning" });
-			warn.createEl("strong", { text: "Conversion notes: " });
-			warn.createEl("span", { text: messages.join("; ") });
-		}
-
-		// ── Content ────────────────────────────────────────────────────────
-		this.contentDiv = scrollEl.createEl("div", { cls: "via-docx-content" });
-		const parser = new DOMParser();
-		const parsed = parser.parseFromString(html, "text/html");
-		while (parsed.body.firstChild) {
-			this.contentDiv.appendChild(
-				this.contentDiv.ownerDocument.importNode(
-					parsed.body.firstChild,
-					true,
-				),
-			);
-		}
-		this.contentDiv.contentEditable = this.editMode ? "true" : "false";
-		if (this.editMode) this.contentDiv.classList.add("via-editable");
-
-		// Track dirty state and undo history
-		this.undoStack = [html];
-		this.redoStack = [];
-		this.contentDiv.addEventListener("input", () => {
-			this.setDirty(true);
-			if (this.contentDiv) {
-				this.undoStack.push(this.contentDiv.innerHTML);
-				this.redoStack = [];
+	private applyZoom(): void {
+		if (this.contentEl_) {
+			this.contentEl_.style.transform = `scale(${this.currentZoom})`;
+			this.contentEl_.style.transformOrigin = "top center";
+			// Adjust width to compensate for scaling
+			if (this.currentZoom !== 1) {
+				this.contentEl_.style.width = `${100 / this.currentZoom}%`;
+			} else {
+				this.contentEl_.style.width = "";
 			}
-		});
-	}
-
-	private undo(): void {
-		if (!this.contentDiv || this.undoStack.length <= 1) return;
-		const current = this.undoStack.pop()!;
-		this.redoStack.push(current);
-		const prev = this.undoStack[this.undoStack.length - 1]!;
-		this.setContentFromHtml(this.contentDiv, prev);
-		this.setDirty(this.undoStack.length > 1);
-	}
-
-	private redo(): void {
-		if (!this.contentDiv || this.redoStack.length === 0) return;
-		const next = this.redoStack.pop()!;
-		this.undoStack.push(next);
-		this.setContentFromHtml(this.contentDiv, next);
-		this.setDirty(true);
-	}
-
-	private toggleEdit(): void {
-		this.editMode = !this.editMode;
-		if (!this.contentDiv || !this.editToggleBtn || !this.saveBtn) return;
-		this.contentDiv.contentEditable = this.editMode ? "true" : "false";
-		this.contentDiv.classList.toggle("via-editable", this.editMode);
-		setIcon(this.editToggleBtn, this.editMode ? "eye" : "pencil");
-		setTooltip(
-			this.editToggleBtn,
-			this.editMode ? "Switch to view mode" : "Switch to edit mode",
-		);
-		this.editToggleBtn.classList.toggle("is-active", this.editMode);
-		this.saveBtn.classList.toggle("via-hidden", !this.editMode);
-		if (this.undoBtn)
-			this.undoBtn.classList.toggle("via-hidden", !this.editMode);
-		if (this.redoBtn)
-			this.redoBtn.classList.toggle("via-hidden", !this.editMode);
-		// Hide dirty indicator when leaving edit mode without saving
-		if (!this.editMode) this.setDirty(false);
-	}
-
-	private setDirty(dirty: boolean): void {
-		this.isDirty = dirty;
-		if (this.dirtyIndicator)
-			this.dirtyIndicator.classList.toggle("via-hidden", !dirty);
-	}
-
-	/** Replace an element's children with parsed HTML without using innerHTML. */
-	private setContentFromHtml(el: HTMLElement, html: string): void {
-		el.empty();
-		const parsed = new DOMParser().parseFromString(html, "text/html");
-		while (parsed.body.firstChild) {
-			el.appendChild(el.ownerDocument.importNode(parsed.body.firstChild, true));
 		}
 	}
 
-	private async saveFile(): Promise<void> {
-		if (!this.currentFile || !this.contentDiv) return;
-
-		if (this.plugin.settings.confirmOnSave) {
-			const confirmed = await confirmModal(
-				this.app,
-				`Overwrite "${this.currentFile.name}"?`,
-				"This will replace the original file. Complex formatting may be simplified.",
-			);
-			if (!confirmed) return;
-		}
-
-		try {
-			const buffer = await saveHtmlAsDocx(this.contentDiv.innerHTML);
-			await this.app.vault.modifyBinary(this.currentFile, buffer);
-			this.setDirty(false);
-			new Notice(`Saved "${this.currentFile.name}"`);
-		} catch (err) {
-			new Notice(`Save failed: ${String(err)}`);
-		}
-	}
-}
-
-// ── Simple confirmation modal ──────────────────────────────────────────────
-function confirmModal(
-	app: App,
-	title: string,
-	message: string,
-): Promise<boolean> {
-	return new Promise((resolve) => {
-		const modal = new ConfirmModal(app, title, message, resolve);
-		modal.open();
-	});
-}
-
-class ConfirmModal extends Modal {
-	constructor(
-		app: App,
-		private title: string,
-		private message: string,
-		private resolve: (v: boolean) => void,
-	) {
-		super(app);
-	}
-
-	onOpen(): void {
-		this.setTitle(this.title);
-		const { contentEl } = this;
-		contentEl.createEl("p", { text: this.message });
-		const btnRow = contentEl.createEl("div", {
-			cls: "modal-button-container",
-		});
-		btnRow
-			.createEl("button", { text: "Cancel" })
-			.addEventListener("click", () => {
-				this.resolve(false);
-				this.close();
-			});
-		const overwriteBtn = btnRow.createEl("button", {
-			text: "Overwrite",
-			cls: "mod-cta via-btn-danger",
-		});
-		overwriteBtn.addEventListener("click", () => {
-			this.resolve(true);
-			this.close();
-		});
-	}
-
-	onClose(): void {
-		this.contentEl.empty();
+	private formatZoom(): string {
+		return `${Math.round(this.currentZoom * 100)}%`;
 	}
 }

@@ -1,10 +1,6 @@
 import esbuild from "esbuild";
 import process from "process";
-import fs from "fs";
-import { builtinModules, createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
-
-const require = createRequire(import.meta.url);
+import { builtinModules } from 'node:module';
 
 const banner =
 `/*
@@ -14,51 +10,6 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = (process.argv[2] === "production");
-
-// punycode is a deprecated Node.js built-in; filter it from externals so the
-// npm `punycode` package gets bundled instead. Some transitive deps use the
-// package-path form `require('punycode/')` which Electron can't resolve at
-// runtime unless it is inlined by esbuild.
-const externalModules = builtinModules.filter(m => m !== 'punycode');
-
-/** Resolves `punycode/` (trailing-slash package-path form) to the npm package. */
-const punycodePlugin = {
-	name: 'punycode-fix',
-	setup(build) {
-		build.onResolve({ filter: /^punycode\/$/ }, async (args) => {
-			const result = await build.resolve('punycode', {
-				resolveDir: args.resolveDir,
-				kind: args.kind,
-			});
-			return result;
-		});
-	},
-};
-
-/**
- * Inlines pdfjs-dist's worker file as a JS string module.
- * PdfView.ts imports it and creates a Blob URL at runtime — no external
- * worker file needed, works in Electron's sandboxed renderer.
- */
-const pdfWorkerPlugin = {
-	name: 'pdf-worker-inline',
-	setup(build) {
-		const workerPath = require.resolve('pdfjs-dist/build/pdf.worker.min.js');
-
-		build.onResolve({ filter: /^pdfjs-worker-src$/ }, () => ({
-			path: workerPath,
-			namespace: 'pdf-worker-text',
-		}));
-
-		build.onLoad({ filter: /.*/, namespace: 'pdf-worker-text' }, async (args) => {
-			const content = await fs.promises.readFile(args.path, 'utf-8');
-			return {
-				contents: `module.exports = ${JSON.stringify(content)};`,
-				loader: 'js',
-			};
-		});
-	},
-};
 
 const context = await esbuild.context({
 	banner: {
@@ -81,8 +32,7 @@ const context = await esbuild.context({
 		"@lezer/common",
 		"@lezer/highlight",
 		"@lezer/lr",
-		...externalModules],
-	plugins: [punycodePlugin, pdfWorkerPlugin],
+		...builtinModules],
 	format: "cjs",
 	target: "es2018",
 	logLevel: "info",
