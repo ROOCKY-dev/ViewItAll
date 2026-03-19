@@ -3,7 +3,7 @@
 	"name": "View It All",
 	"version": "2.0.1",
 	"minAppVersion": "0.15.0",
-	"description": "View and edit Word documents (.docx) natively in Obsidian.",
+	"description": "View and edit Word documents (.docx) natively — no external apps needed.",
 	"author": "ROOCKY.dev",
 	"authorUrl": "https://roocky.dev",
 	"fundingUrl": "https://ko-fi.com/r00cky",
