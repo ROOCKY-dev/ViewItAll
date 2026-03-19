@@ -1,82 +1,47 @@
 # ViewItAll
 
-> Open **PDF**, **Word (.docx)**, **Excel (.xlsx)**, **CSV**, and **PowerPoint (.pptx)** files directly inside [Obsidian](https://obsidian.md) — no external apps, no context switching.
+> View and edit **Word documents (.docx)** natively inside [Obsidian](https://obsidian.md) — no external apps, no context switching.
 
-![Version](https://img.shields.io/badge/version-1.5.0-blue)
+![Version](https://img.shields.io/badge/version-2.0.1-blue)
 ![Obsidian](https://img.shields.io/badge/Obsidian-0.15%2B-purple)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
 
-## Supported Formats
-
-| Format | Extensions | Capabilities |
-|--------|-----------|--------------|
-| PDF | `.pdf` | View + Annotate + Export |
-| Word | `.docx` | View + Edit + Save |
-| Excel | `.xlsx` | View + Edit + Save |
-| CSV | `.csv` | View + Edit + Save |
-| PowerPoint | `.pptx` | View |
-
-Each format can be individually enabled or disabled in **Settings → ViewItAll**.
-
----
-
 ## Features
 
-### PDF Viewer & Annotator
-- Lazy page rendering — only pages near the viewport are loaded, keeping memory low on large documents
-- **Zoom** — steps from 25% to 400%, Ctrl+scroll, Ctrl+`=`/`-`/`0`
-- **Annotation tools** — Pen, Highlighter, Eraser, and sticky Notes, each with configurable colours, widths, and opacity
-- **Snap-to-line** — hold a modifier key to constrain strokes to horizontal, vertical, or 45-degree angles
-- **Full-text search** — Ctrl+F search across all pages with match highlighting and navigation
-- **Table of contents** — extracted from PDF bookmarks/outline, toggle sidebar from the toolbar
-- **Export annotated PDF** — bakes pen and highlighter strokes into a new `.annotated.pdf` file via pdf-lib
-- Annotations saved as a companion `.pdf.annotations.json` sidecar (normalised coordinates)
-- Configurable keyboard shortcuts for every tool and action
-
-### Word (.docx) Viewer / Editor
-- Renders documents as clean HTML via [mammoth](https://github.com/mwilliamson/mammoth.js)
-- Toggle **Edit mode** with Undo / Redo support
-- Save back to `.docx` via [html-to-docx](https://github.com/privateOmega/html-to-docx)
-- Optional confirmation dialog warns about lossy round-trip (custom styles, tracked changes)
-- Configurable: open in edit mode by default, toolbar position (top/bottom), open target (tab/sidebar)
-
-### Spreadsheet (.xlsx / .csv) Viewer / Editor
-- Parses workbooks with [SheetJS](https://sheetjs.com/) (lazy-loaded on first use)
-- **Multi-sheet tabs** for `.xlsx` files
-- **Inline cell editing** — double-click or type in the formula bar; Enter, Tab, and Escape navigation
-- **Formula engine** — evaluates `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `IF`, `AND`, `OR`, `CONCATENATE`, `LEFT`, `RIGHT`, `MID`, `ROUND`, `TODAY`, `NOW`, and more with cell/range references
-- **Add rows & columns**, or right-click headers for Insert / Delete context menus
-- Save back as `.xlsx` or `.csv`; revert to last save with Undo
-- Dirty-state indicator and optional confirm-before-save dialog
-- Ctrl/Cmd+S to save
-
-### PowerPoint (.pptx) Viewer
-- Canvas-based slide rendering via pptxviewjs
-- Previous / Next slide navigation with slide counter
-- Zoom in / out (25%–400%) and **Fit to container**
-- Reads real theme colours from the PPTX file for accurate rendering
-- Detects actual slide dimensions from metadata
+### Word (.docx) viewer and editor
+- **Native OOXML rendering** — parses .docx files directly into a typed document model and renders to DOM. No third-party conversion libraries.
+- **Edit mode** — toggle between view and edit mode. Type directly into paragraphs with full contentEditable support.
+- **Formatting toolbar** — bold, italic, underline, strikethrough, font family, font size, text color, highlight color, paragraph alignment, and clear formatting.
+- **Keyboard shortcuts** — Ctrl+B, Ctrl+I, Ctrl+U for formatting. Ctrl+Z / Ctrl+Shift+Z for undo/redo. Ctrl+S to save.
+- **Image support** — embedded images render inline with correct sizing. Insert new images via toolbar. Drag resize handles to scale images.
+- **Table support** — renders tables with cell shading, column spans, and vertical alignment. Edit cell content with Tab/Shift+Tab navigation.
+- **Round-trip save** — saves back to .docx by regenerating `word/document.xml` while preserving all other ZIP entries (styles, numbering, relationships, media, theme) unchanged.
+- **Undo/Redo** — snapshot-based history with up to 100 levels.
+- **Auto-save** — optionally save unsaved changes when closing a file.
+- Configurable toolbar position (top/bottom), default zoom, and edit mode defaults.
 
 ---
 
 ## Installation
 
-### Manual (development)
+### From community plugins
+1. Open **Settings → Community plugins**.
+2. Search for **View It All**.
+3. Click **Install**, then **Enable**.
+
+### Manual
 1. Clone this repo into your vault's plugin folder:
    ```
    .obsidian/plugins/ViewItAll-md/
    ```
-2. Install dependencies:
+2. Install dependencies and build:
    ```bash
    npm install
-   ```
-3. Build:
-   ```bash
    npm run build
    ```
-4. Enable the plugin in **Settings → Community plugins**.
+3. Enable the plugin in **Settings → Community plugins**.
 
 ---
 
@@ -86,6 +51,7 @@ Each format can be individually enabled or disabled in **Settings → ViewItAll*
 npm install       # install dependencies
 npm run dev       # watch mode — rebuilds on save
 npm run build     # production build
+npm run lint      # run ESLint
 ```
 
 Requires **Node 18+** and **npm**.
@@ -96,36 +62,36 @@ Requires **Node 18+** and **npm**.
 
 ```
 src/
-  main.ts                    # Plugin lifecycle, view registration
-  types.ts                   # Shared interfaces & view-type constants
-  settings.ts                # Settings UI + defaults
+  main.ts              # Plugin lifecycle, view registration
+  types.ts             # Shared interfaces and view-type constants
+  settings.ts          # Settings UI and defaults
+  docx/
+    model.ts           # Pure TypeScript document model interfaces
+    parser.ts          # OOXML ZIP → document model (JSZip + DOMParser)
+    renderer.ts        # Document model → DOM (createEl, no innerHTML)
+    serializer.ts      # Document model → OOXML XML → ZIP round-trip
+    editing.ts         # ContentEditable ↔ model bridge, formatting, undo
+    selection.ts       # Browser Selection ↔ model coordinate mapping
+    toolbar.ts         # Formatting toolbar (bold, italic, color, etc.)
+    history.ts         # Snapshot-based undo/redo stack
+    styles.ts          # OOXML style resolution and inheritance
+    numbering.ts       # List numbering definition parser
+    relationships.ts   # Relationship type constants
   utils/
-    fileUtils.ts             # Vault path helpers
-    docxUtils.ts             # mammoth read + html-to-docx write
-    annotations.ts           # PDF annotation sidecar load/save
-    formulaEval.ts           # Spreadsheet formula engine
-    pdfExport.ts             # Annotated PDF export (pdf-lib)
-    pdfSnap.ts               # Snap-to-line geometry
+    xml.ts             # XML namespace constants, parseXml helper
+    units.ts           # px↔EMU, pt↔half-points, twips conversions
   views/
-    DocxView.ts              # DOCX FileView
-    PdfView.ts               # PDF FileView (pdfjs-dist)
-    PptxView.ts              # PPTX FileView (pptxviewjs)
-    SpreadsheetView.ts       # XLSX / CSV FileView (SheetJS)
-    pdf/
-      PdfSearchController.ts # Full-text PDF search
-      pdfTypes.ts            # PDF-specific types
-styles.css                   # All scoped via-* CSS classes
+    DocxView.ts        # DOCX FileView (view/edit/save lifecycle)
+styles.css             # All scoped via-* CSS classes, Obsidian variables
 ```
 
 ---
 
-## Known Limitations
+## Known limitations
 
-- **DOCX round-trip is lossy** — custom paragraph styles, macros, tracked changes, and complex tables may not survive save.
-- **PDF annotation coordinates are normalised** (0–1); annotations from versions < 0.1.4 (which used absolute px) will render incorrectly.
-- **Spreadsheet formulas** cover common functions but not the full Excel formula language.
-- **PPTX viewer is read-only** — slide editing is not supported.
-- Obsidian's built-in PDF viewer is replaced while the plugin is active; it is restored on unload.
+- **Complex OOXML features** — headers/footers, shapes, SmartArt, embedded OLE objects, and tracked changes are not rendered.
+- **Style fidelity** — the plugin resolves paragraph and run styles but does not implement the full OOXML style inheritance chain (e.g., document defaults, theme fonts).
+- **Desktop only** — requires Electron APIs available in the desktop version of Obsidian.
 
 ---
 

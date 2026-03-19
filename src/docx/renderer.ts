@@ -15,7 +15,6 @@ import type {
 	DocxImage,
 	DocxTable,
 	DocxTableRow,
-	DocxTableCell,
 	DocxRunProperties,
 	DocxParagraphProperties,
 } from "./model";
@@ -78,6 +77,44 @@ export function renderDocument(
 	return ctx.blobUrls;
 }
 
+/**
+ * Re-render a single paragraph element in place.
+ * Used by the editing controller after model mutations.
+ * Returns the new DOM element that replaced the old one.
+ */
+export function rerenderParagraph(
+	doc: DocxDocument,
+	blockIdx: number,
+	oldEl: HTMLElement,
+	styleCache: Map<string, { pProps: DocxParagraphProperties; rProps: DocxRunProperties }>,
+): { el: HTMLElement; blobUrls: string[] } {
+	const block = doc.body[blockIdx];
+	if (!block || block.type !== "paragraph") {
+		return { el: oldEl, blobUrls: [] };
+	}
+
+	const ctx: RenderContext = {
+		doc,
+		blobUrls: [],
+		styleCache,
+		numberingCounters: new Map(),
+		lastNumIdAtLevel: new Map(),
+	};
+
+	// Create a temporary container to render into
+	const parent = oldEl.parentElement;
+	if (!parent) return { el: oldEl, blobUrls: [] };
+
+	const tempDiv = document.createElement("div");
+	renderParagraph(block, tempDiv, ctx, blockIdx);
+
+	const newEl = tempDiv.firstElementChild as HTMLElement;
+	if (!newEl) return { el: oldEl, blobUrls: [] };
+
+	parent.replaceChild(newEl, oldEl);
+	return { el: newEl, blobUrls: ctx.blobUrls };
+}
+
 // ── Block Rendering ─────────────────────────────────────────────────────────
 
 function renderBlocks(
@@ -85,15 +122,17 @@ function renderBlocks(
 	container: HTMLElement,
 	ctx: RenderContext,
 ): void {
-	for (const block of blocks) {
+	for (let blockIdx = 0; blockIdx < blocks.length; blockIdx++) {
+		const block = blocks[blockIdx];
 		if (!block) continue;
 
 		if (block.type === "paragraph") {
-			renderParagraph(block, container, ctx);
+			renderParagraph(block, container, ctx, blockIdx);
 		} else if (block.type === "table") {
-			renderTable(block, container, ctx);
+			renderTable(block, container, ctx, blockIdx);
 		} else if (block.type === "pageBreak") {
-			container.createEl("hr", { cls: "via-docx-page-break" });
+			const hr = container.createEl("hr", { cls: "via-docx-page-break" });
+			hr.dataset.blockIdx = String(blockIdx);
 		}
 	}
 }
@@ -104,6 +143,7 @@ function renderParagraph(
 	para: DocxParagraph,
 	container: HTMLElement,
 	ctx: RenderContext,
+	blockIdx?: number,
 ): void {
 	// Resolve heading level from style
 	let headingLevel = para.properties.headingLevel;
@@ -150,10 +190,13 @@ function renderParagraph(
 	if (headingLevel && headingLevel >= 1 && headingLevel <= 6) {
 		const tag = `h${headingLevel}` as keyof HTMLElementTagNameMap;
 		el = container.createEl(tag, { cls: "via-docx-heading" });
-		// Inline style beats any Obsidian theme CSS that colors headings
-		el.style.color = "inherit";
 	} else {
 		el = container.createEl("p");
+	}
+
+	// Data attribute for DOM ↔ model binding (editing support)
+	if (blockIdx !== undefined) {
+		el.dataset.blockIdx = String(blockIdx);
 	}
 
 	// Apply paragraph styles
@@ -168,8 +211,8 @@ function renderParagraph(
 		return false;
 	});
 
-	if (!hasContent && para.children.length === 0) {
-		// Empty paragraph — add a zero-width space to preserve spacing
+	if (!hasContent) {
+		// Empty paragraph — add a <br> to preserve spacing and caret position
 		el.createEl("br");
 		return;
 	}
@@ -180,12 +223,13 @@ function renderParagraph(
 			cls: "via-docx-num-prefix",
 		});
 		numSpan.textContent = numberingPrefix;
-		numSpan.style.color = "inherit";
 	}
 
 	// Render inline children
-	for (const child of para.children) {
-		renderInline(child, el, ctx, resolvedRProps);
+	for (let runIdx = 0; runIdx < para.children.length; runIdx++) {
+		const child = para.children[runIdx];
+		if (!child) continue;
+		renderInline(child, el, ctx, resolvedRProps, runIdx);
 	}
 }
 
@@ -195,7 +239,7 @@ function applyParagraphStyles(
 ): void {
 	if (props.alignment) {
 		const align = props.alignment === "both" ? "justify" : props.alignment;
-		el.style.textAlign = align;
+		el.style.setProperty("text-align", align);
 	}
 
 	if (props.indentation) {
@@ -212,18 +256,18 @@ function applyParagraphStyles(
 			? twipsToPx(props.indentation.hanging)
 			: 0;
 
-		if (left > 0) el.style.marginLeft = `${left}px`;
-		if (right > 0) el.style.marginRight = `${right}px`;
-		if (firstLine > 0) el.style.textIndent = `${firstLine}px`;
-		if (hanging > 0) el.style.textIndent = `-${hanging}px`;
+		if (left > 0) el.style.setProperty("margin-left", `${left}px`);
+		if (right > 0) el.style.setProperty("margin-right", `${right}px`);
+		if (firstLine > 0) el.style.setProperty("text-indent", `${firstLine}px`);
+		if (hanging > 0) el.style.setProperty("text-indent", `-${hanging}px`);
 	}
 
 	if (props.spacing) {
 		if (props.spacing.before > 0) {
-			el.style.marginTop = `${twipsToPx(props.spacing.before)}px`;
+			el.style.setProperty("margin-top", `${twipsToPx(props.spacing.before)}px`);
 		}
 		if (props.spacing.after > 0) {
-			el.style.marginBottom = `${twipsToPx(props.spacing.after)}px`;
+			el.style.setProperty("margin-bottom", `${twipsToPx(props.spacing.after)}px`);
 		}
 	}
 }
@@ -235,10 +279,11 @@ function renderInline(
 	container: HTMLElement,
 	ctx: RenderContext,
 	styleRProps: DocxRunProperties,
+	runIdx?: number,
 ): void {
 	switch (inline.type) {
 		case "run":
-			renderRun(inline, container, styleRProps);
+			renderRun(inline, container, styleRProps, runIdx);
 			break;
 		case "hyperlink":
 			renderHyperlink(inline, container, ctx, styleRProps);
@@ -262,6 +307,7 @@ function renderRun(
 	run: DocxRun,
 	container: HTMLElement,
 	styleRProps: DocxRunProperties,
+	runIdx?: number,
 ): void {
 	if (!run.text) return;
 	// Merge style-level run properties with run-level overrides
@@ -269,6 +315,11 @@ function renderRun(
 
 	let el: HTMLElement = container.createEl("span");
 	el.textContent = run.text;
+
+	// Data attribute for DOM ↔ model binding (editing support)
+	if (runIdx !== undefined) {
+		el.dataset.runIdx = String(runIdx);
+	}
 
 	// Apply formatting by wrapping in semantic elements
 	if (props.bold) {
@@ -301,9 +352,9 @@ function renderRun(
 		el = sub;
 	}
 
-	// Force color inheritance so Obsidian themes can't override via CSS on
-	// <strong>, <em>, etc. applyRunStyles will overwrite if doc sets color.
-	el.style.color = "inherit";
+	// CSS class "via-docx-run" handles color inheritance;
+	// applyRunStyles will set --via-color if the document specifies a color.
+	el.classList.add("via-docx-run");
 
 	// Apply inline styles for color, size, highlight, font
 	applyRunStyles(el, props);
@@ -313,7 +364,7 @@ function renderRun(
 		const cssColor = HIGHLIGHT_COLORS[props.highlight];
 		if (cssColor) {
 			const mark = container.createEl("mark", { cls: "via-docx-highlight" });
-			mark.style.backgroundColor = cssColor;
+			mark.style.setProperty("background-color", cssColor);
 			mark.appendChild(el);
 			el = mark;
 		}
@@ -328,7 +379,8 @@ function renderRun(
 
 function applyRunStyles(el: HTMLElement, props: DocxRunProperties): void {
 	if (props.color && props.color !== "auto") {
-		el.style.color = `#${props.color}`;
+		el.style.setProperty("--via-color", `#${props.color}`);
+		el.style.setProperty("color", "var(--via-color)");
 	}
 
 	if (props.fontSize) {
@@ -336,12 +388,12 @@ function applyRunStyles(el: HTMLElement, props: DocxRunProperties): void {
 		// Use em units relative to parent for native feel
 		const em = pt / 12; // Assume 12pt base
 		if (Math.abs(em - 1) > 0.05) {
-			el.style.fontSize = `${em.toFixed(2)}em`;
+			el.style.setProperty("font-size", `${em.toFixed(2)}em`);
 		}
 	}
 
 	if (props.fontFamily) {
-		el.style.fontFamily = `"${props.fontFamily}", var(--font-text)`;
+		el.style.setProperty("font-family", `"${props.fontFamily}", var(--font-text)`);
 	}
 }
 
@@ -385,7 +437,14 @@ function renderImage(
 	const url = URL.createObjectURL(blob);
 	ctx.blobUrls.push(url);
 
-	const img = container.createEl("img", {
+	// Wrap image in a resizable container
+	const wrap = container.createEl("span", {
+		cls: "via-docx-image-wrap",
+	});
+	wrap.dataset.imageRid = image.relationshipId;
+	wrap.setAttribute("contenteditable", "false");
+
+	const img = wrap.createEl("img", {
 		cls: "via-docx-image",
 		attr: {
 			src: url,
@@ -393,8 +452,28 @@ function renderImage(
 		},
 	});
 
-	if (image.width > 0) img.style.maxWidth = `${image.width}px`;
-	if (image.height > 0) img.style.maxHeight = `${image.height}px`;
+	// Set explicit width to preserve Word's intended size.
+	// Height auto-scales to maintain aspect ratio.
+	// The CSS max-width: 100% ensures it never overflows the container.
+	if (image.width > 0 && image.height > 0) {
+		wrap.style.setProperty("width", `${image.width}px`);
+		wrap.style.setProperty("display", "inline-block");
+		img.style.setProperty("width", "100%");
+		img.style.setProperty("height", "auto");
+		img.style.setProperty("aspect-ratio", `${image.width} / ${image.height}`);
+	} else if (image.width > 0) {
+		wrap.style.setProperty("width", `${image.width}px`);
+		wrap.style.setProperty("display", "inline-block");
+		img.style.setProperty("width", "100%");
+		img.style.setProperty("height", "auto");
+	} else if (image.height > 0) {
+		img.style.setProperty("height", `${image.height}px`);
+		img.style.setProperty("width", "auto");
+	}
+
+	// Resize handle (bottom-right corner)
+	const handle = wrap.createEl("div", { cls: "via-docx-image-resize-handle" });
+	handle.dataset.imageRid = image.relationshipId;
 }
 
 function renderBreak(
@@ -514,8 +593,12 @@ function renderTable(
 	table: DocxTable,
 	container: HTMLElement,
 	ctx: RenderContext,
+	blockIdx?: number,
 ): void {
 	const tableEl = container.createEl("table", { cls: "via-docx-table" });
+	if (blockIdx !== undefined) {
+		tableEl.dataset.blockIdx = String(blockIdx);
+	}
 
 	// Track vertical merge state: column index → "consumed" flag
 	const vMergeState: Map<number, boolean> = new Map();
@@ -532,13 +615,10 @@ function renderTableRow(
 	vMergeState: Map<number, boolean>,
 ): void {
 	const trEl = tableEl.createEl("tr");
-	let colIdx = 0;
 
 	for (const cell of row.cells) {
 		// Skip cells that are vertically merged continuations
 		if (cell.properties.verticalMerge === "continue") {
-			// Increment the rowspan of the cell that started this merge
-			colIdx += cell.properties.gridSpan;
 			continue;
 		}
 
@@ -552,25 +632,23 @@ function renderTableRow(
 
 		// Cell shading (background color)
 		if (cell.properties.shading) {
-			tdEl.style.backgroundColor = `#${cell.properties.shading}`;
+			tdEl.style.setProperty("background-color", `#${cell.properties.shading}`);
 		}
 
 		// Vertical alignment
 		if (cell.properties.verticalAlign) {
-			tdEl.style.verticalAlign = cell.properties.verticalAlign;
+			tdEl.style.setProperty("vertical-align", cell.properties.verticalAlign);
 		}
 
 		// Cell width
 		if (cell.properties.width) {
-			tdEl.style.width = `${dxaToPx(cell.properties.width)}px`;
+			tdEl.style.setProperty("width", `${dxaToPx(cell.properties.width)}px`);
 		}
 
 		// Render cell content
 		for (const para of cell.paragraphs) {
 			renderParagraph(para, tdEl, ctx);
 		}
-
-		colIdx += cell.properties.gridSpan;
 	}
 }
 

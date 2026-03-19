@@ -7,12 +7,18 @@ export interface PluginSettings {
 	enableDocx: boolean;
 	docxToolbarPosition: ToolbarPosition;
 	docxDefaultZoom: number;
+	/** Open .docx in edit mode by default */
+	docxEditMode: boolean;
+	/** Auto-save dirty documents on close */
+	docxAutoSave: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
 	enableDocx: true,
 	docxToolbarPosition: "top",
 	docxDefaultZoom: 1.0,
+	docxEditMode: false,
+	docxAutoSave: false,
 };
 
 export class ViewItAllSettingTab extends PluginSettingTab {
@@ -72,6 +78,26 @@ export class ViewItAllSettingTab extends PluginSettingTab {
 						this.plugin.settings.docxDefaultZoom = parseFloat(v);
 						await this.plugin.saveSettings();
 					}),
+			);
+
+		new Setting(containerEl)
+			.setName("Open in edit mode")
+			.setDesc("Open .docx files in edit mode by default instead of view mode.")
+			.addToggle((t) =>
+				t.setValue(this.plugin.settings.docxEditMode).onChange(async (v) => {
+					this.plugin.settings.docxEditMode = v;
+					await this.plugin.saveSettings();
+				}),
+			);
+
+		new Setting(containerEl)
+			.setName("Auto-save on close")
+			.setDesc("Automatically save unsaved changes when closing a .docx file.")
+			.addToggle((t) =>
+				t.setValue(this.plugin.settings.docxAutoSave).onChange(async (v) => {
+					this.plugin.settings.docxAutoSave = v;
+					await this.plugin.saveSettings();
+				}),
 			);
 	}
 }

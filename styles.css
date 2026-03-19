@@ -159,6 +159,53 @@
     display: block;
     margin: var(--size-4-2) 0;
     border-radius: var(--radius-s);
+    object-fit: contain;
+}
+
+/* Image resize wrapper */
+.via-docx-image-wrap {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+    vertical-align: bottom;
+    line-height: 0;
+}
+.via-docx-image-wrap .via-docx-image {
+    margin: 0;
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+/* Resize handle — bottom-right corner */
+.via-docx-image-resize-handle {
+    position: absolute;
+    right: -4px;
+    bottom: -4px;
+    width: 12px;
+    height: 12px;
+    background: var(--text-accent);
+    border: 2px solid var(--background-primary);
+    border-radius: 2px;
+    cursor: nwse-resize;
+    opacity: 0;
+    transition: opacity 120ms ease;
+    z-index: 2;
+    pointer-events: auto;
+}
+.via-docx-image-wrap:hover .via-docx-image-resize-handle,
+.via-docx-image-resize-handle.via-resizing {
+    opacity: 1;
+}
+/* Selection outline on hover in editing mode */
+.via-docx-content--editing .via-docx-image-wrap:hover {
+    outline: 2px solid var(--text-accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-s);
+}
+.via-docx-content--editing .via-docx-image-wrap.via-resizing {
+    outline: 2px solid var(--text-accent);
+    outline-offset: 2px;
 }
 
 .via-docx-image-placeholder {
@@ -196,11 +243,31 @@ tr:first-child .via-docx-cell {
     background: var(--background-secondary);
 }
 
+/* ── DOCX color inheritance ──────────────────────────────────────── */
+
+/* Force color inheritance so Obsidian themes don't override heading/run colors */
+.via-docx-heading,
+.via-docx-num-prefix,
+.via-docx-run {
+    color: inherit;
+}
+
+/* Dynamic text color from OOXML run properties — set via CSS custom property */
+.via-docx-run[style*="--via-color"] {
+    color: var(--via-color);
+}
+
 /* ── DOCX numbering prefixes ──────────────────────────────────────── */
 
 .via-docx-num-prefix {
     font-weight: inherit;
     margin-right: 0.3em;
+}
+
+/* ── DOCX zoom ───────────────────────────────────────────────────── */
+
+.via-docx-zoom {
+    transform-origin: top center;
 }
 
 /* ── DOCX highlights ─────────────────────────────────────────────────── */
@@ -223,4 +290,202 @@ tr:first-child .via-docx-cell {
     border-top: 1px dashed var(--background-modifier-border);
     margin: var(--size-4-6) 0;
     opacity: 0.5;
+}
+
+/* ── DOCX editing mode ──────────────────────────────────────────────── */
+
+.via-docx-content--editing [contenteditable="true"] {
+    outline: 1px solid transparent;
+    border-radius: var(--radius-s);
+    transition: outline-color 120ms ease;
+}
+.via-docx-content--editing [contenteditable="true"]:focus {
+    outline-color: var(--background-modifier-border);
+}
+.via-docx-content--editing [contenteditable="true"]:hover:not(:focus) {
+    outline-color: var(--background-modifier-border-hover);
+}
+
+/* Edit/View toggle and save button */
+.via-docx-toolbar-edit {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-1);
+}
+
+.via-docx-toolbar-save--dirty {
+    color: var(--text-accent) !important;
+}
+.via-docx-toolbar-save--dirty::after {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-accent);
+    margin-left: var(--size-2-1);
+    vertical-align: middle;
+}
+
+/* ── DOCX formatting toolbar ────────────────────────────────────────── */
+
+.via-docx-format-toolbar-container {
+    border-bottom: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    flex-shrink: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+.via-docx-wrapper--toolbar-bottom .via-docx-format-toolbar-container {
+    border-bottom: none;
+    border-top: 1px solid var(--background-modifier-border);
+}
+
+.via-docx-format-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--size-2-1);
+    padding: var(--size-2-2) var(--size-4-3);
+    min-height: 32px;
+    white-space: nowrap;
+}
+
+/* Button groups — cluster related buttons together */
+.via-docx-format-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    flex-shrink: 0;
+}
+
+.via-docx-format-btn {
+    flex-shrink: 0;
+}
+.via-docx-format-btn.is-active {
+    background: var(--background-modifier-hover);
+    color: var(--text-accent);
+    border-radius: var(--radius-s);
+}
+
+/* Select dropdowns */
+.via-docx-format-select {
+    appearance: auto;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-s);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: var(--font-ui-smaller);
+    padding: 2px var(--size-4-1);
+    cursor: pointer;
+    min-width: 90px;
+    height: 26px;
+    margin: 0 1px;
+}
+.via-docx-format-select--size {
+    min-width: 50px;
+}
+.via-docx-format-select:hover {
+    border-color: var(--background-modifier-border-hover);
+}
+.via-docx-format-select:focus {
+    outline: none;
+    border-color: var(--text-accent);
+}
+
+/* ── Color picker ──────────────────────────────────────────────────── */
+
+.via-docx-format-color-wrap {
+    position: relative;
+    flex-shrink: 0;
+}
+.via-docx-format-color-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    padding: 2px var(--size-2-2) !important;
+}
+.via-docx-format-color-icon-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.via-docx-format-color-icon-wrap svg {
+    width: 14px;
+    height: 14px;
+}
+.via-docx-format-color-swatch {
+    width: 16px;
+    height: 3px;
+    border-radius: 1px;
+    margin-top: -1px;
+}
+.via-docx-format-color-input {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* ── Highlight dropdown ────────────────────────────────────────────── */
+
+.via-docx-format-highlight-wrap {
+    position: relative;
+    flex-shrink: 0;
+}
+.via-docx-format-highlight-menu {
+    position: fixed;
+    z-index: var(--layer-popover);
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    padding: var(--size-4-2);
+    box-shadow: var(--shadow-s);
+    width: max-content;
+}
+
+/* 8-column swatch grid */
+.via-docx-format-highlight-grid {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 3px;
+    margin-bottom: var(--size-4-1);
+}
+
+.via-docx-format-highlight-swatch {
+    width: 20px;
+    height: 20px;
+    border-radius: var(--radius-s);
+    border: 1px solid var(--background-modifier-border);
+    cursor: pointer;
+    transition: transform 80ms ease, box-shadow 80ms ease;
+}
+.via-docx-format-highlight-swatch:hover {
+    transform: scale(1.2);
+    box-shadow: var(--shadow-s);
+    z-index: 1;
+}
+.via-docx-format-highlight-swatch--dark {
+    border-color: transparent;
+}
+
+/* "No highlight" text button */
+.via-docx-format-highlight-none {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--size-2-1) var(--size-4-2);
+    border-top: 1px solid var(--background-modifier-border);
+    margin-top: var(--size-2-1);
+    padding-top: var(--size-4-1);
+    cursor: pointer;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+    border-radius: var(--radius-s);
+}
+.via-docx-format-highlight-none:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
 }
