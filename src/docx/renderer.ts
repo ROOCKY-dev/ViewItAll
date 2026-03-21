@@ -17,10 +17,12 @@ import type {
 	DocxTableRow,
 	DocxRunProperties,
 	DocxParagraphProperties,
+	DocxTableBorder,
 } from "./model";
 import { defaultRunProperties, defaultParagraphProperties } from "./model";
 import { resolveStyle, resolveHeadingLevel } from "./styles";
-import { halfPointsToPt, twipsToPx, dxaToPx } from "../utils/units";
+import { halfPointsToPt, twipsToPx, twipsToPt, dxaToPx } from "../utils/units";
+import { readabilityGuard, adaptShadingForTheme } from "./themeAdapter";
 
 // ── Word highlight color → CSS color map ────────────────────────────────────
 
@@ -54,6 +56,8 @@ interface RenderContext {
 	numberingCounters: Map<string, number>;
 	/** Track last numId seen at each level to detect resets */
 	lastNumIdAtLevel: Map<number, string>;
+	/** Whether the current Obsidian theme is dark mode */
+	isDark: boolean;
 }
 
 /**
@@ -64,12 +68,14 @@ export function renderDocument(
 	doc: DocxDocument,
 	container: HTMLElement,
 ): string[] {
+	const isDark = document.body.classList.contains("theme-dark");
 	const ctx: RenderContext = {
 		doc,
 		blobUrls: [],
 		styleCache: new Map(),
 		numberingCounters: new Map(),
 		lastNumIdAtLevel: new Map(),
+		isDark,
 	};
 
 	renderBlocks(doc.body, container, ctx);
@@ -93,12 +99,14 @@ export function rerenderParagraph(
 		return { el: oldEl, blobUrls: [] };
 	}
 
+	const isDark = document.body.classList.contains("theme-dark");
 	const ctx: RenderContext = {
 		doc,
 		blobUrls: [],
 		styleCache,
 		numberingCounters: new Map(),
 		lastNumIdAtLevel: new Map(),
+		isDark,
 	};
 
 	// Create a temporary container to render into
@@ -165,18 +173,26 @@ function renderParagraph(
 		if (!headingLevel && resolved.pProps.headingLevel) {
 			headingLevel = resolved.pProps.headingLevel;
 		}
-		// Merge alignment from style if not set on paragraph
-		if (!para.properties.alignment && resolved.pProps.alignment) {
-			para.properties.alignment = resolved.pProps.alignment;
-		}
 	}
+
+	// Compute effective paragraph properties without mutating the model.
+	// Direct properties take precedence over style-resolved properties.
+	const effectiveProps: DocxParagraphProperties = {
+		alignment: para.properties.alignment ?? resolvedPProps.alignment,
+		headingLevel: para.properties.headingLevel ?? resolvedPProps.headingLevel,
+		indentation: para.properties.indentation ?? resolvedPProps.indentation,
+		spacing: para.properties.spacing ?? resolvedPProps.spacing,
+		numberingId: para.properties.numberingId ?? resolvedPProps.numberingId,
+		numberingLevel: para.properties.numberingLevel ?? resolvedPProps.numberingLevel,
+		shading: para.properties.shading ?? resolvedPProps.shading,
+	};
 
 	// Resolve numbering: direct paragraph > style-inherited
 	let numId = para.numberingId;
 	let numLevel = para.numberingLevel;
-	if (!numId && resolvedPProps.numberingId) {
-		numId = resolvedPProps.numberingId;
-		numLevel = resolvedPProps.numberingLevel ?? 0;
+	if (!numId && effectiveProps.numberingId) {
+		numId = effectiveProps.numberingId;
+		numLevel = effectiveProps.numberingLevel ?? 0;
 	}
 
 	// Generate numbering text prefix if applicable
@@ -199,8 +215,8 @@ function renderParagraph(
 		el.dataset.blockIdx = String(blockIdx);
 	}
 
-	// Apply paragraph styles
-	applyParagraphStyles(el, para.properties);
+	// Apply paragraph styles using effective (merged) properties
+	applyParagraphStyles(el, effectiveProps, ctx.isDark);
 
 	// Check if paragraph is empty (just whitespace/empty runs)
 	const hasContent = para.children.some((child) => {
@@ -229,17 +245,18 @@ function renderParagraph(
 	for (let runIdx = 0; runIdx < para.children.length; runIdx++) {
 		const child = para.children[runIdx];
 		if (!child) continue;
-		renderInline(child, el, ctx, resolvedRProps, runIdx);
+		renderInline(child, el, ctx, resolvedRProps, runIdx, effectiveProps.shading);
 	}
 }
 
 function applyParagraphStyles(
 	el: HTMLElement,
 	props: DocxParagraphProperties,
+	isDark: boolean,
 ): void {
 	if (props.alignment) {
 		const align = props.alignment === "both" ? "justify" : props.alignment;
-		el.style.setProperty("text-align", align);
+		el.setCssStyles({ textAlign: align });
 	}
 
 	if (props.indentation) {
@@ -256,19 +273,38 @@ function applyParagraphStyles(
 			? twipsToPx(props.indentation.hanging)
 			: 0;
 
-		if (left > 0) el.style.setProperty("margin-left", `${left}px`);
-		if (right > 0) el.style.setProperty("margin-right", `${right}px`);
-		if (firstLine > 0) el.style.setProperty("text-indent", `${firstLine}px`);
-		if (hanging > 0) el.style.setProperty("text-indent", `-${hanging}px`);
+		if (left > 0) el.setCssStyles({ marginLeft: `${left}px` });
+		if (right > 0) el.setCssStyles({ marginRight: `${right}px` });
+		if (firstLine > 0) el.setCssStyles({ textIndent: `${firstLine}px` });
+		if (hanging > 0) el.setCssStyles({ textIndent: `-${hanging}px` });
 	}
 
 	if (props.spacing) {
 		if (props.spacing.before > 0) {
-			el.style.setProperty("margin-top", `${twipsToPx(props.spacing.before)}px`);
+			el.setCssStyles({ marginTop: `${twipsToPx(props.spacing.before)}px` });
 		}
 		if (props.spacing.after > 0) {
-			el.style.setProperty("margin-bottom", `${twipsToPx(props.spacing.after)}px`);
+			el.setCssStyles({ marginBottom: `${twipsToPx(props.spacing.after)}px` });
 		}
+		// B3: Apply line spacing
+		if (props.spacing.line > 0) {
+			if (props.spacing.lineRule === "exact") {
+				el.setCssStyles({ lineHeight: `${twipsToPt(props.spacing.line)}pt` });
+			} else if (props.spacing.lineRule === "atLeast") {
+				el.setCssStyles({ minHeight: `${twipsToPt(props.spacing.line)}pt`, lineHeight: `${twipsToPt(props.spacing.line)}pt` });
+			} else {
+				const factor = props.spacing.line / 240;
+				if (Math.abs(factor - 1) > 0.05) {
+					el.setCssStyles({ lineHeight: `${factor.toFixed(2)}` });
+				}
+			}
+		}
+	}
+
+	// B1: Paragraph background shading — C3: adapted for theme
+	if (props.shading) {
+		const adapted = adaptShadingForTheme(props.shading, isDark);
+		el.setCssStyles({ backgroundColor: `#${adapted}`, padding: "4px 8px", borderRadius: "var(--radius-s)" });
 	}
 }
 
@@ -280,13 +316,14 @@ function renderInline(
 	ctx: RenderContext,
 	styleRProps: DocxRunProperties,
 	runIdx?: number,
+	parentBgHex?: string,
 ): void {
 	switch (inline.type) {
 		case "run":
-			renderRun(inline, container, styleRProps, runIdx);
+			renderRun(inline, container, styleRProps, ctx, runIdx, parentBgHex);
 			break;
 		case "hyperlink":
-			renderHyperlink(inline, container, ctx, styleRProps);
+			renderHyperlink(inline, container, ctx, styleRProps, parentBgHex);
 			break;
 		case "image":
 			renderImage(inline, container, ctx);
@@ -307,7 +344,9 @@ function renderRun(
 	run: DocxRun,
 	container: HTMLElement,
 	styleRProps: DocxRunProperties,
+	ctx: RenderContext,
 	runIdx?: number,
+	parentBgHex?: string,
 ): void {
 	if (!run.text) return;
 	// Merge style-level run properties with run-level overrides
@@ -357,14 +396,14 @@ function renderRun(
 	el.classList.add("via-docx-run");
 
 	// Apply inline styles for color, size, highlight, font
-	applyRunStyles(el, props);
+	applyRunStyles(el, props, ctx.isDark, parentBgHex);
 
 	// Highlight wraps the run in a <mark>
 	if (props.highlight) {
 		const cssColor = HIGHLIGHT_COLORS[props.highlight];
 		if (cssColor) {
 			const mark = container.createEl("mark", { cls: "via-docx-highlight" });
-			mark.style.setProperty("background-color", cssColor);
+			mark.setCssStyles({ backgroundColor: cssColor });
 			mark.appendChild(el);
 			el = mark;
 		}
@@ -377,23 +416,29 @@ function renderRun(
 	}
 }
 
-function applyRunStyles(el: HTMLElement, props: DocxRunProperties): void {
+function applyRunStyles(
+	el: HTMLElement,
+	props: DocxRunProperties,
+	isDark = false,
+	parentBgHex?: string,
+): void {
 	if (props.color && props.color !== "auto") {
-		el.style.setProperty("--via-color", `#${props.color}`);
-		el.style.setProperty("color", "var(--via-color)");
+		// C4: readability guard — prevent invisible text
+		const safeColor = readabilityGuard(props.color, parentBgHex, isDark);
+		if (safeColor) {
+			el.setCssStyles({ color: `#${safeColor}` });
+		}
+		// If safeColor is undefined, text uses theme default (inherited)
 	}
 
 	if (props.fontSize) {
 		const pt = halfPointsToPt(props.fontSize);
-		// Use em units relative to parent for native feel
-		const em = pt / 12; // Assume 12pt base
-		if (Math.abs(em - 1) > 0.05) {
-			el.style.setProperty("font-size", `${em.toFixed(2)}em`);
-		}
+		// B2: Use absolute pt units — avoids incorrect scaling from assumed base
+		el.setCssStyles({ fontSize: `${pt}pt` });
 	}
 
 	if (props.fontFamily) {
-		el.style.setProperty("font-family", `"${props.fontFamily}", var(--font-text)`);
+		el.setCssStyles({ fontFamily: `"${props.fontFamily}", var(--font-text)` });
 	}
 }
 
@@ -402,6 +447,7 @@ function renderHyperlink(
 	container: HTMLElement,
 	ctx: RenderContext,
 	styleRProps: DocxRunProperties,
+	parentBgHex?: string,
 ): void {
 	const a = container.createEl("a", {
 		cls: "via-docx-link",
@@ -415,7 +461,7 @@ function renderHyperlink(
 	}
 
 	for (const run of link.children) {
-		renderRun(run, a, styleRProps);
+		renderRun(run, a, styleRProps, ctx, undefined, parentBgHex);
 	}
 }
 
@@ -456,19 +502,13 @@ function renderImage(
 	// Height auto-scales to maintain aspect ratio.
 	// The CSS max-width: 100% ensures it never overflows the container.
 	if (image.width > 0 && image.height > 0) {
-		wrap.style.setProperty("width", `${image.width}px`);
-		wrap.style.setProperty("display", "inline-block");
-		img.style.setProperty("width", "100%");
-		img.style.setProperty("height", "auto");
-		img.style.setProperty("aspect-ratio", `${image.width} / ${image.height}`);
+		wrap.setCssStyles({ width: `${image.width}px`, display: "inline-block" });
+		img.setCssStyles({ width: "100%", height: "auto", aspectRatio: `${image.width} / ${image.height}` });
 	} else if (image.width > 0) {
-		wrap.style.setProperty("width", `${image.width}px`);
-		wrap.style.setProperty("display", "inline-block");
-		img.style.setProperty("width", "100%");
-		img.style.setProperty("height", "auto");
+		wrap.setCssStyles({ width: `${image.width}px`, display: "inline-block" });
+		img.setCssStyles({ width: "100%", height: "auto" });
 	} else if (image.height > 0) {
-		img.style.setProperty("height", `${image.height}px`);
-		img.style.setProperty("width", "auto");
+		img.setCssStyles({ height: `${image.height}px`, width: "auto" });
 	}
 
 	// Resize handle (bottom-right corner)
@@ -589,6 +629,28 @@ function toRoman(num: number): string {
 
 // ── Table Rendering ─────────────────────────────────────────────────────────
 
+function applyBorder(
+	el: HTMLElement,
+	side: "top" | "bottom" | "left" | "right",
+	border: DocxTableBorder,
+): void {
+	const cssProp = `border${side.charAt(0).toUpperCase()}${side.slice(1)}` as keyof CSSStyleDeclaration;
+	if (border.val === "nil" || border.val === "none") {
+		el.setCssStyles({ [cssProp]: "none" } as Partial<CSSStyleDeclaration>);
+		return;
+	}
+	const color =
+		border.color && border.color !== "auto"
+			? `#${border.color}`
+			: "var(--table-border-color, var(--background-modifier-border))";
+	const sz = border.sz ? Math.max(1, Math.round(border.sz / 8)) : 1;
+	let style = "solid";
+	if (border.val === "dashed" || border.val === "dotted" || border.val === "double") {
+		style = border.val;
+	}
+	el.setCssStyles({ [cssProp]: `${sz}px ${style} ${color}` } as Partial<CSSStyleDeclaration>);
+}
+
 function renderTable(
 	table: DocxTable,
 	container: HTMLElement,
@@ -600,8 +662,20 @@ function renderTable(
 		tableEl.dataset.blockIdx = String(blockIdx);
 	}
 
-	// Track vertical merge state: column index → "consumed" flag
-	const vMergeState: Map<number, boolean> = new Map();
+	if (table.properties.styleId) {
+		tableEl.classList.add(`via-docx-table--${table.properties.styleId}`);
+	}
+
+	if (table.properties.borders) {
+		const tb = table.properties.borders;
+		if (tb.top) applyBorder(tableEl, "top", tb.top);
+		if (tb.bottom) applyBorder(tableEl, "bottom", tb.bottom);
+		if (tb.left) applyBorder(tableEl, "left", tb.left);
+		if (tb.right) applyBorder(tableEl, "right", tb.right);
+	}
+
+	// Track vertical merge state: visual column index → td element to update rowspan
+	const vMergeState: Map<number, HTMLTableCellElement> = new Map();
 
 	for (const row of table.rows) {
 		renderTableRow(row, tableEl, ctx, vMergeState);
@@ -612,18 +686,33 @@ function renderTableRow(
 	row: DocxTableRow,
 	tableEl: HTMLElement,
 	ctx: RenderContext,
-	vMergeState: Map<number, boolean>,
+	vMergeState: Map<number, HTMLTableCellElement>,
 ): void {
 	const trEl = tableEl.createEl("tr");
+	let colIdx = 0;
 
 	for (const cell of row.cells) {
-		// Skip cells that are vertically merged continuations
+		const currentColIdx = colIdx;
+		colIdx += cell.properties.gridSpan;
+
+		// Skip cells that are vertically merged continuations but increment their master's rowspan
 		if (cell.properties.verticalMerge === "continue") {
+			const rootTd = vMergeState.get(currentColIdx);
+			if (rootTd) {
+				const currentSpan = parseInt(rootTd.getAttribute("rowspan") || "1", 10);
+				rootTd.setAttribute("rowspan", String(currentSpan + 1));
+			}
 			continue;
 		}
 
 		const tag = row.isHeader ? "th" : "td";
-		const tdEl = trEl.createEl(tag, { cls: "via-docx-cell" });
+		const tdEl = trEl.createEl(tag, { cls: "via-docx-cell" }) as HTMLTableCellElement;
+
+		if (cell.properties.verticalMerge === "restart") {
+			vMergeState.set(currentColIdx, tdEl);
+		} else {
+			vMergeState.delete(currentColIdx);
+		}
 
 		// Column span
 		if (cell.properties.gridSpan > 1) {
@@ -632,21 +721,44 @@ function renderTableRow(
 
 		// Cell shading (background color)
 		if (cell.properties.shading) {
-			tdEl.style.setProperty("background-color", `#${cell.properties.shading}`);
+			const adapted = adaptShadingForTheme(cell.properties.shading, ctx.isDark);
+			tdEl.setCssStyles({ backgroundColor: `#${adapted}` });
 		}
 
 		// Vertical alignment
 		if (cell.properties.verticalAlign) {
-			tdEl.style.setProperty("vertical-align", cell.properties.verticalAlign);
+			tdEl.setCssStyles({ verticalAlign: cell.properties.verticalAlign });
 		}
 
 		// Cell width
 		if (cell.properties.width) {
-			tdEl.style.setProperty("width", `${dxaToPx(cell.properties.width)}px`);
+			tdEl.setCssStyles({ width: `${dxaToPx(cell.properties.width)}px` });
+		}
+
+		// Cell borders
+		if (cell.properties.borders) {
+			const b = cell.properties.borders;
+			if (b.top) applyBorder(tdEl, "top", b.top);
+			if (b.bottom) applyBorder(tdEl, "bottom", b.bottom);
+			if (b.left) applyBorder(tdEl, "left", b.left);
+			if (b.right) applyBorder(tdEl, "right", b.right);
+		}
+
+		// Cell margins
+		if (cell.properties.margins) {
+			const m = cell.properties.margins;
+			if (m.top !== undefined && m.top > 0) tdEl.setCssStyles({ paddingTop: `${dxaToPx(m.top)}px` });
+			if (m.bottom !== undefined && m.bottom > 0) tdEl.setCssStyles({ paddingBottom: `${dxaToPx(m.bottom)}px` });
+			if (m.left !== undefined && m.left > 0) tdEl.setCssStyles({ paddingLeft: `${dxaToPx(m.left)}px` });
+			if (m.right !== undefined && m.right > 0) tdEl.setCssStyles({ paddingRight: `${dxaToPx(m.right)}px` });
 		}
 
 		// Render cell content
 		for (const para of cell.paragraphs) {
+			// Inherit cell shading into child paragraph if not overriden
+			if (!para.properties.shading && cell.properties.shading) {
+				para.properties.shading = cell.properties.shading;
+			}
 			renderParagraph(para, tdEl, ctx);
 		}
 	}
