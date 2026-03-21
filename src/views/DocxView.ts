@@ -559,12 +559,12 @@ export class DocxView extends FileView {
 	private applyZoom(): void {
 		if (this.contentEl_) {
 			this.contentEl_.classList.add("via-docx-zoom");
-			this.contentEl_.style.setProperty("transform", `scale(${this.currentZoom})`);
+			this.contentEl_.setCssStyles({ transform: `scale(${this.currentZoom})` });
 			// Adjust width to compensate for scaling
 			if (this.currentZoom !== 1) {
-				this.contentEl_.style.setProperty("width", `${100 / this.currentZoom}%`);
+				this.contentEl_.setCssStyles({ width: `${100 / this.currentZoom}%` });
 			} else {
-				this.contentEl_.style.removeProperty("width");
+				this.contentEl_.setCssStyles({ width: "" });
 			}
 		}
 	}
